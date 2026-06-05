@@ -2,7 +2,8 @@
  * ============================================================================
  * NKTg AI SYSTEM CORE KERNEL - STEP 1: SECURE QUERY INITIALIZATION MODULE
  * ============================================================================
- * File: /nktg-ai/step1-init.js
+ * v2: Gắn context.meta.mode từ window.nktgGetMode()
+ *     'extraction' → Não Trái  |  'addition' → Não Phải
  */
 
 export const NKTgConfig = {
@@ -36,7 +37,6 @@ export function unlockPipelineUI() {
         Logger.log("UI Control Re-enabled globally by the handling endpoint.", "success");
     }
 
-    // Clear input sau khi pipeline hoàn tất (cả thành công lẫn lỗi)
     const ta = document.getElementById('queryInput');
     const cc = document.getElementById('charCounter');
     const fi = document.getElementById('fileInput');
@@ -132,7 +132,8 @@ export function verifyHardwareCapabilities() {
     return capabilities;
 }
 
-// inputType: 'text' | 'txt' | 'docx' | 'pdf' — do input-adapter.js truyền vào
+// inputType: 'text' | 'txt' | 'docx' | 'pdf'
+// mode:      'extraction' | 'addition' — lấy từ window.nktgGetMode()
 export async function initializeNKTgQuery(input, inputType = 'text') {
     setPipelineState("PROCESSING");
     Logger.log(`--------------------------------------------------`, "info");
@@ -144,18 +145,23 @@ export async function initializeNKTgQuery(input, inputType = 'text') {
         Logger.log("Payload inspection completed successfully. Content structure secured.", "success");
 
         const hardware = verifyHardwareCapabilities();
+
+        // ── Lấy mode từ UI galaxy selector ──
+        const mode = (typeof window.nktgGetMode === 'function' ? window.nktgGetMode() : null) || 'extraction';
+
         const nktgContext = {
             meta: {
                 timestamp: Date.now(),
                 rawInput: cleanInput,
-                inputType,          // 'text' | 'txt' | 'docx' | 'pdf'
+                inputType,
+                mode,               // 'extraction' | 'addition'
                 vramSavingsMode: true
             },
             runtimeCapabilities: hardware,
             get pipelineState() { return currentPipelineState; }
         };
 
-        Logger.log(`NKTg Context Machine constructed. InputType: ${inputType}`, "success");
+        Logger.log(`NKTg Context Machine constructed. InputType: ${inputType} | Mode: ${mode}`, "success");
 
         if (typeof geoRoutingHandler === 'function') {
             setPipelineState("GEO_ROUTING_ACTIVATED");
