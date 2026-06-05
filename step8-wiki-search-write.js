@@ -307,6 +307,31 @@ function isProperNoun(token, sentence) {
 }
 
 // ============================================================================
+// HELPER — Kiểm tra token có ở base form không
+// Chỉ thay synonym khi token ở dạng nguyên thể (base form)
+// Skip nếu token đã chia: -ed, -ing, -s/-es (trừ một số ngoại lệ)
+// ============================================================================
+function isBaseForm(token) {
+    const t = token.toLowerCase();
+
+    // Quá ngắn → không xác định được
+    if (t.length < 3) return false;
+
+    // Dạng -ing → đang chia (gerund/present participle)
+    if (t.endsWith('ing') && t.length > 4) return false;
+
+    // Dạng -ed → past tense/past participle
+    if (t.endsWith('ed') && t.length > 3) return false;
+
+    // Dạng -s/-es → plural noun hoặc 3rd person singular verb
+    // Ngoại lệ: "this", "his", "was", "has", "as", "us", "bus"... → giữ lại
+    const sExceptions = new Set(['this','his','was','has','as','us','bus','yes','its','plus','thus','versus','campus','focus','bonus','virus','status','census','chorus','corpus','exodus','nexus','nexus','prospectus','radius','stimulus','syllabus']);
+    if (t.endsWith('s') && t.length > 3 && !sExceptions.has(t)) return false;
+
+    return true;
+}
+
+// ============================================================================
 // HELPER — Lọc synonyms: bỏ cụm từ (có space), bỏ từ quá hiếm/cổ
 // ============================================================================
 function filterSynonyms(synonyms, originalToken) {
@@ -318,67 +343,6 @@ function filterSynonyms(synonyms, originalToken) {
         if (syn.length < 2) return false;
         return true;
     });
-}
-
-// ============================================================================
-// HELPER — Convert synonym về đúng dạng của token gốc
-// Hỗ trợ: past tense (-ed), past participle (-ed), gerund (-ing), plural (-s/-es)
-// ============================================================================
-function matchWordForm(synonym, originalToken) {
-    const orig = originalToken.toLowerCase();
-    const syn  = synonym.toLowerCase();
-
-    // Detect dạng của token gốc
-    const isGerund     = orig.endsWith('ing') && orig.length > 4;
-    const isPastOrPP   = orig.endsWith('ed')  && orig.length > 3;
-    const isPlural     = orig.endsWith('s')   && !orig.endsWith('ss') && orig.length > 3;
-    const isPlural2    = orig.endsWith('es')  && orig.length > 4;
-
-    // Nếu synonym đã đúng dạng → dùng luôn
-    if (isGerund   && syn.endsWith('ing')) return synonym;
-    if (isPastOrPP && syn.endsWith('ed'))  return synonym;
-    if (isPlural   && syn.endsWith('s'))   return synonym;
-
-    // Convert synonym về dạng gốc
-    // Lấy base form của synonym (bỏ ing/ed/s nếu có)
-    let base = syn;
-    if (syn.endsWith('ing')) base = syn.slice(0, -3);
-    else if (syn.endsWith('ed')) base = syn.slice(0, -2);
-    else if (syn.endsWith('s') && !syn.endsWith('ss')) base = syn.slice(0, -1);
-    else if (syn.endsWith('es')) base = syn.slice(0, -2);
-
-    if (base.length < 2) return synonym; // base quá ngắn → dùng synonym gốc
-
-    // Apply dạng của token gốc vào base
-    if (isGerund) {
-        // Nếu base kết thúc bằng e → bỏ e rồi thêm ing (make → making)
-        if (base.endsWith('e') && base.length > 2) return base.slice(0, -1) + 'ing';
-        return base + 'ing';
-    }
-    if (isPastOrPP) {
-        // Nếu base kết thúc bằng e → thêm d (announce → announced)
-        if (base.endsWith('e')) return base + 'd';
-        // Nếu base kết thúc bằng consonant đơn sau vowel → double consonant (stop → stopped)
-        const vowels = 'aeiou';
-        if (base.length >= 2 &&
-            !vowels.includes(base[base.length - 1]) &&
-            vowels.includes(base[base.length - 2]) &&
-            !vowels.includes(base[base.length - 3] || 'x') &&
-            base.length <= 6) {
-            return base + base[base.length - 1] + 'ed';
-        }
-        return base + 'ed';
-    }
-    if (isPlural || isPlural2) {
-        if (base.endsWith('s') || base.endsWith('x') ||
-            base.endsWith('z') || base.endsWith('ch') || base.endsWith('sh')) {
-            return base + 'es';
-        }
-        return base + 's';
-    }
-
-    // Không detect được dạng → dùng synonym nguyên bản
-    return synonym;
 }
 
 // ============================================================================
@@ -404,11 +368,16 @@ async function optimizeSentence(sentence, tokenScores, lang) {
 
     // Tuần tự từng token DAMP
     for (const dampToken of dampTokens) {
+        // Skip token đã chia (past tense, gerund, plural) — tránh convert sai
+        if (!isBaseForm(dampToken)) {
+            Logger.log(`[Wiki Optimize] "${dampToken}" → not base form, skip`, 'info');
+            continue;
+        }
+
         const rawSynonyms = await fetchSynonyms(dampToken, lang);
 
-        // Lọc: bỏ cụm từ có space/gạch ngang, convert về đúng dạng token gốc
-        const synonyms = filterSynonyms(rawSynonyms, dampToken)
-            .map(syn => matchWordForm(syn, dampToken));
+        // Lọc: bỏ cụm từ có space/gạch ngang
+        const synonyms = filterSynonyms(rawSynonyms, dampToken);
 
         if (synonyms.length === 0) {
             Logger.log(`[Wiki Optimize] "${dampToken}" → no synonyms after filter, skip`, 'info');
