@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NKTg AI Core - Production Engine</title>
+    <style>
+        :root {
+            --bg-color: #f5f5f5;
+            --panel-bg: #ffffff;
+            --border-color: #e0e0e0;
+            --text-color: #1a1a1a;
+            --accent-color: #d97706;
+            --success-color: #16a34a;
+            --danger-color: #dc2626;
+            --disabled-color: #d1d5db;
+            --muted-color: #6b7280;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background-color: var(--bg-color);
+            padding: 24px;
+        }
+
+        h1 {
+            font-size: 20px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            color: var(--accent-color);
+            margin-top: 0;
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: var(--muted-color);
+            margin-top: -5px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        select, textarea {
+            width: 100%;
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-color);
+            padding: 10px;
+            box-sizing: border-box;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+            margin-bottom: 4px;
+        }
+
+        select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 3px rgba(217,119,6,0.2);
+        }
+
+        .counter-container {
+            text-align: right;
+            font-size: 12px;
+            color: var(--muted-color);
+            font-family: monospace;
+            margin-bottom: 15px;
+        }
+
+        .counter-container.limit-reached {
+            color: var(--danger-color);
+            font-weight: bold;
+        }
+
+        .file-upload-group { margin-bottom: 15px; }
+        .file-upload-label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
+        .file-upload-label span { font-weight: 400; font-size: 12px; color: var(--muted-color); margin-left: 6px; }
+        .file-upload-input { display: none; }
+
+        .file-upload-btn {
+            display: inline-block;
+            background-color: var(--panel-bg);
+            border: 1px dashed var(--border-color);
+            border-radius: 6px;
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--muted-color);
+            cursor: pointer;
+            transition: border-color 0.2s, color 0.2s;
+            width: 100%;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        .file-upload-btn:hover {
+            border-color: var(--accent-color);
+            color: var(--accent-color);
+        }
+
+        .file-upload-status {
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted-color);
+            font-family: monospace;
+            min-height: 18px;
+        }
+
+        .file-upload-status.success { color: #16a34a; }
+        .file-upload-status.error   { color: var(--danger-color); font-weight: bold; }
+
+        .btn {
+            background-color: var(--success-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        .btn:hover:not(:disabled) { background-color: #15803d; }
+
+        .btn:disabled {
+            background-color: var(--disabled-color);
+            color: #6b7280;
+            cursor: not-allowed;
+        }
+
+        .console-panel {
+            margin-top: 25px;
+            background-color: #e8e8e8;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .console-title {
+            color: var(--muted-color);
+            margin-bottom: 8px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .log-entry { margin-bottom: 4px; line-height: 1.5; }
+        .log-time    { color: #2563eb; }
+        .log-info    { color: #374151; }
+        .log-success { color: #16a34a; }
+        .log-warn    { color: #d97706; }
+        .log-danger  { color: #dc2626; }
+
+        .mode-selector-wrap {
+            overflow-x: hidden;
+        }
+
+        .mode-selector-inner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            padding: 8px 0;
+            transform-origin: center top;
+        }
+
+        @media (max-width: 600px) {
+            .mode-selector-inner {
+                transform: scale(0.72);
+                margin-bottom: -40px;
+            }
+        }
+
+        @media (max-width: 400px) {
+            .mode-selector-inner {
+                transform: scale(0.55);
+                margin-bottom: -80px;
+            }
+        }
+
+        /* ── NAV ── */
+        .nktg-nav-desktop {
+            display: none;
+        }
+
+        .nktg-nav-mobile {
+            display: none;
+        }
+
+        /* Desktop: sidebar trái */
+        @media (min-width: 769px) {
+            body {
+                padding: 20px 20px 20px 240px;
+            }
+            .nktg-nav-desktop {
+                display: flex;
+                flex-direction: column;
+                position: fixed;
+                top: 0; left: 0;
+                width: 220px;
+                height: 100vh;
+                background: var(--bg-color);
+                border-right: 1px solid var(--border-color);
+                padding: 24px 0;
+                gap: 4px;
+                z-index: 100;
+            }
+            .nktg-nav-desktop .nav-item {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 10px 20px;
+                color: var(--muted-color);
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                border-radius: 0;
+                transition: background 0.2s, color 0.2s;
+                text-decoration: none;
+                border: none;
+                background: transparent;
+                width: 100%;
+                text-align: left;
+            }
+            .nktg-nav-desktop .nav-item:hover {
+                background: var(--bg-color);
+                color: var(--text-color);
+            }
+            .nktg-nav-desktop .nav-item.active {
+                color: #7c3aed;
+                font-weight: 600;
+            }
+            .nktg-nav-desktop .nav-item .nav-icon {
+                font-size: 18px;
+                width: 24px;
+                text-align: center;
+                flex-shrink: 0;
+            }
+            .nktg-nav-desktop .nav-item.active .nav-icon {
+                color: #7c3aed;
+            }
+        }
+
+        /* Mobile: bottom bar */
+        @media (max-width: 768px) {
+            body {
+                padding: 20px 20px 80px 20px;
+            }
+            .nktg-nav-mobile {
+                display: flex;
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                height: 64px;
+                background: var(--bg-color);
+                border-top: 1px solid var(--border-color);
+                z-index: 100;
+                align-items: center;
+                justify-content: space-around;
+                padding: 0 8px;
+            }
+            .nktg-nav-mobile .nav-item {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 3px;
+                color: var(--muted-color);
+                font-size: 10px;
+                font-weight: 500;
+                cursor: pointer;
+                flex: 1;
+                padding: 6px 0;
+                border: none;
+                background: transparent;
+                transition: color 0.2s;
+            }
+            .nktg-nav-mobile .nav-item .nav-icon {
+                font-size: 20px;
+            }
+            .nktg-nav-mobile .nav-item.active {
+                color: #7c3aed;
+            }
+            .nktg-nav-mobile .nav-item.active .nav-icon {
+                color: #7c3aed;
+            }
+        }
+        /* ────────── */
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: bold;
+            border-radius: 3px;
+            background-color: #e5e7eb;
+            color: #374151;
+            float: right;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Desktop Nav -->
+<nav class="nktg-nav-desktop" id="navDesktop">
+    <button class="nav-item active">
+        <span class="nav-icon">⌂</span>
+        <span>Home</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">◷</span>
+        <span>History</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">⇄</span>
+        <span>Extraction ↔ Addition</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">▤</span>
+        <span>Sign Up / Log in</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">⊞</span>
+        <span>Control Panel</span>
+    </button>
+</nav>
+
+<!-- Mobile Nav -->
+<nav class="nktg-nav-mobile" id="navMobile">
+    <button class="nav-item active">
+        <span class="nav-icon">⌂</span>
+        <span>Home</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">◷</span>
+        <span>History</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">⇄</span>
+        <span>Extraction ↔ Addition</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">▤</span>
+        <span>Sign Up / Log in</span>
+    </button>
+    <button class="nav-item">
+        <span class="nav-icon">⊞</span>
+        <span>Control Panel</span>
+    </button>
+</nav>
+
+<script>
+(function(){
+    function initNav(navId) {
+        const nav = document.getElementById(navId);
+        if (!nav) return;
+        const items = nav.querySelectorAll('.nav-item');
+        items.forEach(btn => {
+            btn.addEventListener('click', () => {
+                items.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+    initNav('navDesktop');
+    initNav('navMobile');
+})();
+</script>
+
+<div class="container">
+    <div class="status-badge" id="stateBadge" style="display:none;">PIPELINE: IDLE</div>
+    <h1>NKTg AI for Organizations</h1>
+
+    <!-- Mode Selector -->
+    <div class="form-group mode-selector-wrap">
+        <div class="mode-selector-inner">
+            <button id="btnTraction" onclick="nktgSelectMode('traction')" style="
+                background: transparent;
+                border: 1.5px solid #d1d5db;
+                border-radius: 6px;
+                color: #6b7280;
+                font-size: 15px;
+                font-weight: 700;
+                padding: 10px 28px;
+                cursor: pointer;
+                letter-spacing: 0.1em;
+                min-width: 130px;
+                transition: color 0.2s, border-color 0.2s;
+            ">Extraction</button>
+
+            <canvas id="nktgGalaxy" width="260" height="200" style="border-radius:6px; flex-shrink:0;"></canvas>
+
+            <button id="btnAddition" onclick="nktgSelectMode('addition')" style="
+                background: transparent;
+                border: 1.5px solid #d1d5db;
+                border-radius: 6px;
+                color: #6b7280;
+                font-size: 15px;
+                font-weight: 700;
+                padding: 10px 28px;
+                cursor: pointer;
+                letter-spacing: 0.1em;
+                min-width: 130px;
+                transition: color 0.2s, border-color 0.2s;
+            ">Addition</button>
+        </div>
+    </div>
+
+    <script>
+    (function(){
+        const canvas = document.getElementById('nktgGalaxy');
+        const ctx = canvas.getContext('2d');
+        const W = 260, H = 200, CX = W/2, CY = H/2;
+        let currentMode = null;
+
+        const STARS = [
+            [20,15],[45,8],[80,22],[120,5],[170,18],[210,12],[240,25],
+            [15,50],[55,40],[100,35],[150,28],[200,42],[245,38],
+            [10,90],[60,75],[110,85],[160,70],[220,82],[250,68],
+            [25,130],[70,120],[130,135],[180,125],[235,130],
+            [18,160],[65,155],[115,168],[175,158],[230,165],
+            [40,185],[95,178],[145,182],[210,188]
+        ];
+
+        function drawGalaxy() {
+            ctx.clearRect(0,0,W,H);
+            ctx.fillStyle = '#f5f5f5';
+            ctx.fillRect(0,0,W,H);
+            STARS.forEach(([x,y],i) => {
+                ctx.beginPath();
+                ctx.arc(x,y,(i%3)*0.4+0.4,0,Math.PI*2);
+                ctx.fillStyle = 'rgba(255,255,255,'+ ((i%4)*0.12+0.25) +')';
+                ctx.fill();
+            });
+            const grad = ctx.createRadialGradient(CX,CY,2,CX,CY,52);
+            grad.addColorStop(0,'rgba(255,240,180,0.6)');
+            grad.addColorStop(0.35,'rgba(180,140,255,0.2)');
+            grad.addColorStop(1,'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(CX,CY,52,0,Math.PI*2); ctx.fill();
+            function spiralArm(startAngle, color) {
+                ctx.beginPath();
+                for(let i=0; i<=200; i++) {
+                    const t = i/200;
+                    const angle = startAngle + t * Math.PI * 3.2;
+                    const r = t * 88;
+                    const x = CX + r * Math.cos(angle);
+                    const y = CY + r * Math.sin(angle) * 0.60;
+                    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+                }
+                ctx.strokeStyle = color; ctx.lineWidth = 2;
+                ctx.shadowBlur = 6; ctx.shadowColor = color;
+                ctx.stroke(); ctx.shadowBlur = 0;
+            }
+            spiralArm(0.2,         'rgba(140,180,255,0.55)');
+            spiralArm(0.2+Math.PI, 'rgba(140,180,255,0.45)');
+            spiralArm(0.9,         'rgba(180,140,255,0.35)');
+            spiralArm(0.9+Math.PI, 'rgba(180,140,255,0.3)');
+            if(currentMode) drawSpiralArrow(currentMode);
+        }
+
+        function spiralPoint(t, startAngle) {
+            const angle = startAngle + t * Math.PI * 3.2;
+            const r = t * 88;
+            return { x: CX + r*Math.cos(angle), y: CY + r*Math.sin(angle)*0.60 };
+        }
+
+        function drawArrowHead(x, y, angle, color, size) {
+            ctx.save();
+            ctx.translate(x,y); ctx.rotate(angle);
+            ctx.fillStyle = color;
+            ctx.shadowBlur = 12; ctx.shadowColor = color;
+            ctx.beginPath();
+            ctx.moveTo(0,0); ctx.lineTo(-size,-size*0.5); ctx.lineTo(-size,size*0.5);
+            ctx.closePath(); ctx.fill();
+            ctx.shadowBlur = 0; ctx.restore();
+        }
+
+        function drawSpiralArrow(m) {
+            const isTraction = m === 'traction';
+            const color  = isTraction ? '#E2533A' : '#4A9B2F';
+            const tStart = isTraction ? 0.85 : 0.3;
+            const tEnd   = isTraction ? 0.3  : 0.85;
+            const steps  = 60;
+            [0.2, 0.2 + Math.PI].forEach(startAngle => {
+                ctx.beginPath();
+                for(let i=0; i<=steps; i++) {
+                    const t = tStart + (tEnd-tStart)*(i/steps);
+                    const p = spiralPoint(t, startAngle);
+                    i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y);
+                }
+                ctx.strokeStyle = color; ctx.lineWidth = 2.2;
+                ctx.shadowBlur = 10; ctx.shadowColor = color;
+                ctx.stroke(); ctx.shadowBlur = 0;
+                const pTip    = spiralPoint(tEnd, startAngle);
+                const pBefore = spiralPoint(tEnd + (isTraction ? 0.02 : -0.02), startAngle);
+                const ang = Math.atan2(pTip.y-pBefore.y, pTip.x-pBefore.x);
+                drawArrowHead(pTip.x, pTip.y, ang, color, 9);
+            });
+        }
+
+        window.nktgSelectMode = function(m) {
+            if(currentMode === m) {
+                currentMode = null;
+                const btnT = document.getElementById('btnTraction');
+                const btnA = document.getElementById('btnAddition');
+                btnT.style.color = '#6b7280';
+                btnT.style.borderColor = '#d1d5db';
+                btnA.style.color = '#6b7280';
+                btnA.style.borderColor = '#d1d5db';
+                drawGalaxy();
+                return;
+            }
+            const w = document.getElementById('modeWarning');
+            if(w) w.style.display = 'none';
+            currentMode = m;
+            const btnT = document.getElementById('btnTraction');
+            const btnA = document.getElementById('btnAddition');
+            btnT.style.color = '#6b7280';
+            btnT.style.borderColor = '#d1d5db';
+            btnA.style.color = '#6b7280';
+            btnA.style.borderColor = '#d1d5db';
+            if(m === 'traction') {
+                btnT.style.color = '#E2533A';
+                btnT.style.borderColor = '#E2533A';
+            } else {
+                btnA.style.color = '#4A9B2F';
+                btnA.style.borderColor = '#4A9B2F';
+            }
+            drawGalaxy();
+        };
+
+        window.nktgGetMode = function() { return currentMode; };
+        drawGalaxy();
+    })();
+    </script>
+
+    <div id="modeWarning" style="
+        display: none;
+        margin: 0 0 12px 0;
+        padding: 8px 14px;
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 6px;
+        color: #d97706;
+        font-size: 13px;
+        font-weight: 600;
+    ">⚠ Please select Extraction or Addition before running the pipeline.</div>
+
+    <!-- Input Box -->
+    <div class="form-group">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <label for="queryInput" style="margin-bottom:0;">Input</label>
+            <span class="counter-container" id="charCounter" style="margin-bottom:0;">0/21000</span>
+        </div>
+
+        <div id="inputWrap" style="
+            position: relative;
+            background-color: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        ">
+            <textarea id="queryInput" maxlength="21000"
+                placeholder="Enter text or click [+] to attach files (.txt, .docx, .pdf)..."
+                style="
+                    width: 100%;
+                    min-height: 120px;
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    color: var(--text-color);
+                    font-size: 14px;
+                    font-family: inherit;
+                    padding: 12px 14px 48px 14px;
+                    box-sizing: border-box;
+                    resize: vertical;
+                    line-height: 1.6;
+                "
+            ></textarea>
+
+            <div style="
+                position: absolute;
+                bottom: 0; left: 0; right: 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 8px 10px;
+                pointer-events: none;
+            ">
+                <label for="fileInput" id="fileUploadBtn" title="Attach file" aria-label="Attach file" style="
+                    pointer-events: all;
+                    background: transparent;
+                    border: 1px solid var(--border-color);
+                    border-radius: 6px;
+                    cursor: pointer;
+                    display: flex; align-items: center; justify-content: center;
+                    width: 30px; height: 30px;
+                    color: var(--muted-color);
+                    font-size: 20px; line-height: 1;
+                    transition: border-color 0.2s, color 0.2s;
+                    user-select: none;
+                ">+</label>
+
+                <button id="sendArrow" title="Submit" aria-label="Submit" style="
+                    pointer-events: all;
+                    background: transparent;
+                    border: 1px solid #d1d5db;
+                    border-radius: 6px;
+                    cursor: default;
+                    display: flex; align-items: center; justify-content: center;
+                    width: 30px; height: 30px;
+                    color: #9ca3af;
+                    font-size: 16px; line-height: 1;
+                    opacity: 0.35;
+                    transition: color 0.2s, border-color 0.2s, opacity 0.2s;
+                ">↑</button>
+            </div>
+        </div>
+
+        <input type="file" id="fileInput" class="file-upload-input" accept=".txt,.docx,.pdf">
+        <div class="file-upload-status" id="fileUploadStatus" style="margin-top:6px;"></div>
+    </div>
+
+    <script>
+    (function(){
+        const ta      = document.getElementById('queryInput');
+        const wrap    = document.getElementById('inputWrap');
+        const arrow   = document.getElementById('sendArrow');
+        const plusBtn = document.getElementById('fileUploadBtn');
+        const COLORS  = { traction: '#E2533A', addition: '#4A9B2F' };
+        const fileInput = document.getElementById('fileInput');
+
+        function updateArrow() {
+            const hasText = ta.value.trim().length > 0;
+            const hasFile = fileInput && fileInput.files && fileInput.files.length > 0;
+            const mode    = typeof window.nktgGetMode === 'function' ? window.nktgGetMode() : null;
+            const color   = mode ? COLORS[mode] : null;
+            const warning = document.getElementById('modeWarning');
+            if((hasText || hasFile) && !mode) {
+                if(warning) warning.style.display = 'block';
+            } else {
+                if(warning) warning.style.display = 'none';
+            }
+            if((hasText || hasFile) && color) {
+                arrow.style.color       = color;
+                arrow.style.borderColor = color;
+                arrow.style.opacity     = '1';
+                arrow.style.cursor      = 'pointer';
+            } else {
+                arrow.style.color       = '#9ca3af';
+                arrow.style.borderColor = '#d1d5db';
+                arrow.style.opacity     = '0.35';
+                arrow.style.cursor      = 'default';
+            }
+        }
+
+        ta.addEventListener('input', updateArrow);
+        fileInput.addEventListener('change', updateArrow);
+        ta.addEventListener('focus', () => {
+            wrap.style.borderColor = 'var(--accent-color)';
+            wrap.style.boxShadow   = '0 0 0 3px rgba(217,119,6,0.2)';
+        });
+        ta.addEventListener('blur', () => {
+            wrap.style.borderColor = 'var(--border-color)';
+            wrap.style.boxShadow   = 'none';
+        });
+        plusBtn.addEventListener('mouseover', () => {
+            plusBtn.style.borderColor = 'var(--accent-color)';
+            plusBtn.style.color       = 'var(--accent-color)';
+        });
+        plusBtn.addEventListener('mouseout', () => {
+            plusBtn.style.borderColor = 'var(--border-color)';
+            plusBtn.style.color       = 'var(--muted-color)';
+        });
+        const origSelectMode = window.nktgSelectMode;
+        window.nktgSelectMode = function(m) {
+            origSelectMode(m);
+            updateArrow();
+        };
+        updateArrow();
+    })();
+    </script>
+
+    <div class="console-title" style="margin-top: 20px;">NKTg Core Kernel Output Log:</div>
+    <div class="console-panel" id="consoleOutput"></div>
+
+    <div id="outputPanel" style="margin-top: 5px;"></div>
+</div>
+
+<script type="module" src="./main.js"></script>
+
+</body>
+</html>
