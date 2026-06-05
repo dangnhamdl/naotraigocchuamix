@@ -294,7 +294,8 @@ class NKTgOutputWriteLayer {
             // sort pool theo score giảm dần, lấy top
             const sortedPool   = [...optimizedPool].sort((a, b) => b.score - a.score);
             const addCount     = Math.ceil(sortedPool.length * 0.618);
-            const addSentences = sortedPool.slice(0, addCount).map(p => p.sentence);
+            // dùng originalSentence — key trong sentenceScores
+            const addSentences = sortedPool.slice(0, addCount).map(p => p.originalSentence);
 
             // Gộp + giữ thứ tự gốc từ sentenceScores
             const allSelected = new Set([...base.baseSentences, ...addSentences]);
@@ -302,9 +303,10 @@ class NKTgOutputWriteLayer {
 
         } else if (mixMode === 'comprehensive') {
             // comprehensive: base + toàn bộ optimizedPool, giữ thứ tự gốc
+            // dùng originalSentence — key trong sentenceScores
             const allSelected = new Set([
                 ...base.baseSentences,
-                ...optimizedPool.map(p => p.sentence)
+                ...optimizedPool.map(p => p.originalSentence)
             ]);
             selectedSentences = Object.keys(base.sentenceScores).filter(s => allSelected.has(s));
         } else {
