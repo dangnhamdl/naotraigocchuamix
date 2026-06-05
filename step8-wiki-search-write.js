@@ -270,7 +270,12 @@ async function optimizeSentence(sentence, tokenScores, lang) {
 
     // So sánh kết quả cuối vs câu gốc ban đầu
     if (currentScore > originalScore) {
-        return { sentence: currentSentence, score: currentScore, replacements };
+        return {
+            sentence: currentSentence,         // câu đã thay từ — dùng để render
+            originalSentence: sentence,         // câu gốc — key trong sentenceScores
+            score: currentScore,
+            replacements
+        };
     }
 
     Logger.log(`[Wiki Optimize] Sentence dropped (no net improvement)`, 'info');

@@ -313,22 +313,29 @@ class NKTgOutputWriteLayer {
 
         const optimizedText = selectedSentences.join(' ');
 
-        // Build optimizedPool lookup theo sentence string
+        // Build optimizedPool lookup: originalSentence → { newSentence, replacements }
+        // item.originalSentence = câu gốc (key trong sentenceScores)
+        // item.sentence         = câu đã thay từ (dùng để render)
         const poolMap = new Map();
         for (const item of optimizedPool) {
-            if (item.replacements && item.replacements.length > 0) {
-                poolMap.set(item.sentence, item.replacements);
+            if (item.originalSentence && item.replacements && item.replacements.length > 0) {
+                poolMap.set(item.originalSentence, {
+                    newSentence: item.sentence,
+                    replacements: item.replacements
+                });
             }
         }
 
         // displaySentences: [{ text, replacements }]
-        // text: dòng hiển thị, replacements: [] hoặc danh sách từ được thay
+        // text: câu đã thay (nếu có optimize) hoặc câu gốc
+        // replacements: [] hoặc danh sách từ được thay để highlight
         const displaySentences = [];
         for (const sentence of selectedSentences) {
-            const repls = poolMap.get(sentence) || [];
-            const lines = sentence.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const poolItem = poolMap.get(sentence);
+            const displayText = poolItem ? poolItem.newSentence : sentence;
+            const repls       = poolItem ? poolItem.replacements : [];
+            const lines = displayText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             for (let i = 0; i < lines.length; i++) {
-                // Chỉ gắn replacements vào dòng đầu tiên của câu (dòng chứa từ được thay)
                 displaySentences.push({ text: lines[i], replacements: i === 0 ? repls : [] });
             }
         }
@@ -344,7 +351,6 @@ class NKTgOutputWriteLayer {
             expansionRate: base.rawInput.length > 0
                 ? ((optimizedText.length / base.rawInput.length) * 100).toFixed(1) + '%'
                 : '0%',
-            replacementMap,
             dominantTokens: base.dominantTokens,
             filteredTokens: base.filteredTokens,
             stableTokens:   base.stableTokens,
