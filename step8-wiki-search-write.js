@@ -82,18 +82,11 @@ async function fetchSynonymsFreeDictionary(token) {
 
     for (const entry of (Array.isArray(data) ? data : [])) {
         for (const meaning of (entry.meanings || [])) {
-            // synonyms cấp meaning
+            // Chỉ lấy synonyms cấp meaning — đây mới là synonym thật sự
+            // Bỏ cấp definition vì hay chứa từ liên quan, không phải synonym
             for (const syn of (meaning.synonyms || [])) {
                 if (syn && syn.toLowerCase() !== token.toLowerCase()) {
                     synonyms.add(syn.trim());
-                }
-            }
-            // synonyms cấp definition
-            for (const def of (meaning.definitions || [])) {
-                for (const syn of (def.synonyms || [])) {
-                    if (syn && syn.toLowerCase() !== token.toLowerCase()) {
-                        synonyms.add(syn.trim());
-                    }
                 }
             }
         }
