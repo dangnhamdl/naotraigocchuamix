@@ -56,7 +56,38 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 }
 
 // ============================================================================
-// NGUỒN 1 — dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
+// NGUỒN 1 — Free Dictionary API (synonyms cấp meaning)
+// https://api.dictionaryapi.dev/api/v2/entries/en/{word}
+// Chỉ lấy synonyms cấp meaning — synonym thật sự, không lấy cấp definition
+// ============================================================================
+async function fetchSynonymsFreeDictionary(token) {
+    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
+
+    const res = await fetchWithTimeout(url, {
+        headers: { 'Accept': 'application/json' }
+    });
+
+    if (res.status === 404) return [];
+    if (!res.ok) throw new Error(`FreeDictionary HTTP ${res.status}`);
+
+    const data = await res.json();
+    const synonyms = new Set();
+
+    for (const entry of (Array.isArray(data) ? data : [])) {
+        for (const meaning of (entry.meanings || [])) {
+            for (const syn of (meaning.synonyms || [])) {
+                if (syn && syn.toLowerCase() !== token.toLowerCase()) {
+                    synonyms.add(syn.trim());
+                }
+            }
+        }
+    }
+
+    return [...synonyms].slice(0, 10);
+}
+
+// ============================================================================
+// NGUỒN 2 — dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
 //
 // Bước 1: dictionaryapi.dev → xác định POS của token
 //   GET https://api.dictionaryapi.dev/api/v2/entries/en/{word}
@@ -220,17 +251,26 @@ async function fetchSynonyms(token, lang) {
     if (/^\d+$/.test(token)) return [];
     if (stopWords.has(token.toLowerCase())) return [];
 
-    // Nguồn 1: dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
+    // Nguồn 1: Free Dictionary API — synonyms cấp meaning
     try {
-        const synonyms = await fetchSynonymsSource1(token);
-        Logger.log(`[Wiki] Source1 (DictAPI+Datamuse): "${token}" → ${synonyms.length} synonym(s)`, 'info');
-        return synonyms; // kể cả [] — từ không có hoặc không tìm được → không fallback
+        const synonyms = await fetchSynonymsFreeDictionary(token);
+        Logger.log(`[Wiki] FreeDictionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
+        return synonyms; // kể cả [] — không tìm được → không fallback
     } catch (err) {
-        // Bị chặn (network/CORS) → thử nguồn 2
-        Logger.log(`[Wiki] Source1 blocked (${err.message}) → fallback Wiktionary`, 'warn');
+        // Bị chặn → thử nguồn 2
+        Logger.log(`[Wiki] FreeDictionary blocked (${err.message}) → fallback Source2`, 'warn');
     }
 
-    // Nguồn 2: Wiktionary MediaWiki
+    // Nguồn 2: dictionaryapi.dev (POS) + Datamuse
+    try {
+        const synonyms = await fetchSynonymsSource1(token);
+        Logger.log(`[Wiki] Source2 (DictAPI+Datamuse): "${token}" → ${synonyms.length} synonym(s)`, 'info');
+        return synonyms;
+    } catch (err) {
+        Logger.log(`[Wiki] Source2 blocked (${err.message}) → fallback Wiktionary`, 'warn');
+    }
+
+    // Nguồn 3: Wiktionary MediaWiki
     try {
         const synonyms = await fetchSynonymsWiktionary(token);
         Logger.log(`[Wiki] Wiktionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
