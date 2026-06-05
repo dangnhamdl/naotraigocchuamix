@@ -20,6 +20,7 @@
  */
 import { setPipelineState, unlockPipelineUI, Logger, initializeNKTgQuery } from './step1-init.js';
 import { handleDistributedSync } from './step9-distributed-sync.js';
+import { optimizeRejectedSentences } from './step8-wiki-search-write.js';
 
 const KATEX_JS  = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js';
 const KATEX_CSS = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
@@ -222,6 +223,7 @@ class NKTgOutputWriteLayer {
             ampRatio,
             dampRatio,
             stableRatio,
+            lang: context.textMeta?.language || 'en',  // cho Wiki search
             dominantTokens: kernel.dominantTokens,
             filteredTokens: kernel.filteredTokens,
             stableTokens:   kernel.stableTokens,
@@ -231,13 +233,40 @@ class NKTgOutputWriteLayer {
 
     // ------------------------------------------------------------------
     // mixLayer — tầng trung gian
-    // Hiện tại: pass-through (tiêu chuẩn = base)
-    // Sau này: Expanded / Comprehensive / Wiki Mixer sẽ xử lý ở đây
+    // standard    : baseSentences (pass-through)
+    // expanded    : baseSentences + optimizedPool (câu bị bỏ đã tối ưu)
+    // comprehensive: baseSentences + tất cả optimizedPool, giữ thứ tự gốc
     // ------------------------------------------------------------------
-    mixLayer(base, mixMode = 'standard') {
-        // standard: dùng nguyên baseSentences
-        const selectedSentences = base.baseSentences;
-        const optimizedText     = selectedSentences.join(' ');
+    mixLayer(base, mixMode = 'standard', optimizedPool = []) {
+        let selectedSentences;
+
+        if (mixMode === 'standard' || optimizedPool.length === 0) {
+            // standard: dùng nguyên baseSentences
+            selectedSentences = base.baseSentences;
+
+        } else if (mixMode === 'expanded') {
+            // expanded: base + top ceil(pool.length × 0.618) câu tối ưu nhất
+            // sort pool theo score giảm dần, lấy top
+            const sortedPool   = [...optimizedPool].sort((a, b) => b.score - a.score);
+            const addCount     = Math.ceil(sortedPool.length * 0.618);
+            const addSentences = sortedPool.slice(0, addCount).map(p => p.sentence);
+
+            // Gộp + giữ thứ tự gốc từ sentenceScores
+            const allSelected = new Set([...base.baseSentences, ...addSentences]);
+            selectedSentences = Object.keys(base.sentenceScores).filter(s => allSelected.has(s));
+
+        } else if (mixMode === 'comprehensive') {
+            // comprehensive: base + toàn bộ optimizedPool, giữ thứ tự gốc
+            const allSelected = new Set([
+                ...base.baseSentences,
+                ...optimizedPool.map(p => p.sentence)
+            ]);
+            selectedSentences = Object.keys(base.sentenceScores).filter(s => allSelected.has(s));
+        } else {
+            selectedSentences = base.baseSentences;
+        }
+
+        const optimizedText = selectedSentences.join(' ');
 
         const displaySentences = [];
         for (const sentence of selectedSentences) {
@@ -416,22 +445,48 @@ class NKTgOutputWriteLayer {
             });
         });
 
-        // Expanded — placeholder, logic mix bổ sung sau
+        // Expanded
         const btnExpanded = document.createElement('button');
         btnExpanded.style.cssText = btnStyle;
         btnExpanded.textContent = '⊕ Expanded';
-        btnExpanded.title = 'Mở rộng vừa — thêm câu từ phần bị bỏ (sắp có)';
-        btnExpanded.addEventListener('click', () => {
-            Logger.log('[Step 8W] Expanded: mix layer chưa sẵn sàng — coming soon.', 'warn');
+        btnExpanded.title = 'Mở rộng vừa — thêm câu tối ưu từ phần bị bỏ';
+        btnExpanded.addEventListener('click', async () => {
+            btnExpanded.disabled = true;
+            btnExpanded.textContent = '...';
+            Logger.log('[Step 8W] Expanded: bắt đầu tối ưu câu bị bỏ...', 'info');
+            try {
+                const pool = await optimizeRejectedSentences(output._base);
+                const mixed = outputWriteLayer.mixLayer(output._base, 'expanded', pool);
+                mixed._base = output._base;
+                await outputWriteLayer.renderToUI(mixed);
+                Logger.log(`[Step 8W] Expanded OK: ${pool.length} câu tối ưu thêm vào`, 'success');
+            } catch (err) {
+                Logger.log(`[Step 8W] Expanded error: ${err.message}`, 'danger');
+                btnExpanded.disabled = false;
+                btnExpanded.textContent = '⊕ Expanded';
+            }
         });
 
-        // Comprehensive — placeholder, logic mix bổ sung sau
+        // Comprehensive
         const btnComprehensive = document.createElement('button');
         btnComprehensive.style.cssText = btnStyle;
         btnComprehensive.textContent = '◉ Comprehensive';
-        btnComprehensive.title = 'Mở rộng sâu — toàn bộ câu theo energy (sắp có)';
-        btnComprehensive.addEventListener('click', () => {
-            Logger.log('[Step 8W] Comprehensive: mix layer chưa sẵn sàng — coming soon.', 'warn');
+        btnComprehensive.title = 'Mở rộng sâu — toàn bộ câu tối ưu';
+        btnComprehensive.addEventListener('click', async () => {
+            btnComprehensive.disabled = true;
+            btnComprehensive.textContent = '...';
+            Logger.log('[Step 8W] Comprehensive: bắt đầu tối ưu toàn bộ câu bị bỏ...', 'info');
+            try {
+                const pool = await optimizeRejectedSentences(output._base);
+                const mixed = outputWriteLayer.mixLayer(output._base, 'comprehensive', pool);
+                mixed._base = output._base;
+                await outputWriteLayer.renderToUI(mixed);
+                Logger.log(`[Step 8W] Comprehensive OK: ${pool.length} câu tối ưu thêm vào`, 'success');
+            } catch (err) {
+                Logger.log(`[Step 8W] Comprehensive error: ${err.message}`, 'danger');
+                btnComprehensive.disabled = false;
+                btnComprehensive.textContent = '◉ Comprehensive';
+            }
         });
 
         // Top
@@ -469,6 +524,7 @@ export async function handleOutputLayerWrite(context) {
 
         // Bước 2: mix layer (tiêu chuẩn = pass-through)
         context.output = outputWriteLayer.mixLayer(base, 'standard');
+        context.output._base = base;  // giữ base để nút Expanded/Comprehensive dùng
 
         // Bước 3: render kết quả đã qua mix
         await outputWriteLayer.renderToUI(context.output);
