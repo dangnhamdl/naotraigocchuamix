@@ -313,18 +313,24 @@ class NKTgOutputWriteLayer {
 
         const optimizedText = selectedSentences.join(' ');
 
-        // Map câu → replacements (chỉ câu từ optimizedPool mới có)
-        const replacementMap = new Map();
+        // Build optimizedPool lookup theo sentence string
+        const poolMap = new Map();
         for (const item of optimizedPool) {
             if (item.replacements && item.replacements.length > 0) {
-                replacementMap.set(item.sentence, item.replacements);
+                poolMap.set(item.sentence, item.replacements);
             }
         }
 
+        // displaySentences: [{ text, replacements }]
+        // text: dòng hiển thị, replacements: [] hoặc danh sách từ được thay
         const displaySentences = [];
         for (const sentence of selectedSentences) {
+            const repls = poolMap.get(sentence) || [];
             const lines = sentence.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-            displaySentences.push(...lines);
+            for (let i = 0; i < lines.length; i++) {
+                // Chỉ gắn replacements vào dòng đầu tiên của câu (dòng chứa từ được thay)
+                displaySentences.push({ text: lines[i], replacements: i === 0 ? repls : [] });
+            }
         }
 
         return {
@@ -448,9 +454,11 @@ class NKTgOutputWriteLayer {
             Logger.log('[Step 8W] KaTeX load failed — fallback to plain text.', 'warn');
         }
 
-        const replacementMap = output.replacementMap || new Map();
+        for (const item of output.sentences) {
+            // item: { text, replacements } hoặc string (standard mode)
+            const text  = typeof item === 'string' ? item : item.text;
+            const repls = typeof item === 'string' ? [] : (item.replacements || []);
 
-        for (const sentence of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
                 margin: 0 0 10px 0;
@@ -462,15 +470,10 @@ class NKTgOutputWriteLayer {
                 font-size: 14px;
             `;
 
-            // Tìm replacements cho câu này
-            // optimizedPool lưu câu đã thay — tìm theo key khớp
-            const repls = replacementMap.get(sentence) || [];
-
             if (repls.length > 0) {
-                // Render có highlight từ được thay
-                renderSentenceWithHighlight(p, sentence, repls);
+                renderSentenceWithHighlight(p, text, repls);
             } else {
-                renderSentence(p, sentence);
+                renderSentence(p, text);
             }
             responseWrap.appendChild(p);
         }
