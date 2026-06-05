@@ -56,43 +56,88 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 }
 
 // ============================================================================
-// NGUỒN 1 — Free Dictionary API
-// https://api.dictionaryapi.dev/api/v2/entries/en/{word}
-// Public, CORS OK, không cần key, hỗ trợ tiếng Anh
-// Response: [{ meanings: [{ partOfSpeech, synonyms: [] }] }]
+// NGUỒN 1 — dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
+//
+// Bước 1: dictionaryapi.dev → xác định POS của token
+//   GET https://api.dictionaryapi.dev/api/v2/entries/en/{word}
+//   Lấy partOfSpeech từ meaning đầu tiên có nhiều definitions nhất
+//
+// Bước 2: Datamuse → lấy synonyms đúng POS
+//   GET https://api.datamuse.com/words?rel_syn={word}&md=p
+//   Filter: chỉ giữ synonym có tags chứa đúng POS của token
+//
+// Map POS: noun→n | verb→v | adjective→adj | adverb→adv
 // ============================================================================
-async function fetchSynonymsFreeDictionary(token) {
-    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
 
-    const res = await fetchWithTimeout(url, {
+// Map partOfSpeech từ dictionaryapi.dev sang Datamuse tag
+const POS_MAP = {
+    'noun':      'n',
+    'verb':      'v',
+    'adjective': 'adj',
+    'adverb':    'adv',
+    'pronoun':   'n',   // pronoun xử lý như noun
+};
+
+async function fetchSynonymsSource1(token) {
+    // ── Bước 1: xác định POS từ dictionaryapi.dev ──
+    const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
+
+    const dictRes = await fetchWithTimeout(dictUrl, {
         headers: { 'Accept': 'application/json' }
     });
 
     // 404 = từ không có trong từ điển → return [] (không phải bị chặn)
-    if (res.status === 404) return [];
+    if (dictRes.status === 404) return [];
 
-    // Lỗi khác (5xx, network) → throw để fallback nguồn 2
-    if (!res.ok) throw new Error(`FreeDictionary HTTP ${res.status}`);
+    // Lỗi mạng/server → throw để fallback nguồn 2
+    if (!dictRes.ok) throw new Error(`DictAPI HTTP ${dictRes.status}`);
 
-    const data = await res.json();
+    const dictData = await dictRes.json();
+    if (!Array.isArray(dictData) || dictData.length === 0) return [];
 
-    // data: Array of entries
-    // entry.meanings: [{ partOfSpeech, synonyms: [...], definitions: [{synonyms: [...]}] }]
-    const synonyms = new Set();
-
-    for (const entry of (Array.isArray(data) ? data : [])) {
+    // Lấy POS từ meaning có nhiều definitions nhất — meaning chính của từ
+    let detectedPOS = null;
+    let maxDefs = 0;
+    for (const entry of dictData) {
         for (const meaning of (entry.meanings || [])) {
-            // Chỉ lấy synonyms cấp meaning — đây mới là synonym thật sự
-            // Bỏ cấp definition vì hay chứa từ liên quan, không phải synonym
-            for (const syn of (meaning.synonyms || [])) {
-                if (syn && syn.toLowerCase() !== token.toLowerCase()) {
-                    synonyms.add(syn.trim());
-                }
+            const defCount = (meaning.definitions || []).length;
+            if (defCount > maxDefs) {
+                maxDefs = defCount;
+                detectedPOS = meaning.partOfSpeech;
             }
         }
     }
 
-    return [...synonyms].slice(0, 10);
+    if (!detectedPOS) return []; // không xác định được POS → không thay
+
+    const datamuseTag = POS_MAP[detectedPOS.toLowerCase()];
+    if (!datamuseTag) return []; // POS không hỗ trợ (conjunction, preposition...) → bỏ qua
+
+    // ── Bước 2: lấy synonyms từ Datamuse, filter theo POS ──
+    const datamuseUrl = `https://api.datamuse.com/words?rel_syn=${encodeURIComponent(token.toLowerCase())}&md=p&max=20`;
+
+    const datamuseRes = await fetchWithTimeout(datamuseUrl, {
+        headers: { 'Accept': 'application/json' }
+    });
+
+    if (!datamuseRes.ok) throw new Error(`Datamuse HTTP ${datamuseRes.status}`);
+
+    const datamuseData = await datamuseRes.json();
+
+    // Filter: chỉ giữ synonym cùng POS với token gốc
+    // Bỏ cụm từ nhiều hơn 1 từ (có space)
+    const synonyms = (Array.isArray(datamuseData) ? datamuseData : [])
+        .filter(item => {
+            if (!item.word) return false;
+            if (item.word.includes(' ')) return false; // bỏ cụm từ
+            if (item.word.toLowerCase() === token.toLowerCase()) return false;
+            const tags = item.tags || [];
+            return tags.includes(datamuseTag);
+        })
+        .map(item => item.word.trim())
+        .slice(0, 10);
+
+    return synonyms;
 }
 
 // ============================================================================
@@ -175,14 +220,14 @@ async function fetchSynonyms(token, lang) {
     if (/^\d+$/.test(token)) return [];
     if (stopWords.has(token.toLowerCase())) return [];
 
-    // Nguồn 1: Free Dictionary API
+    // Nguồn 1: dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
     try {
-        const synonyms = await fetchSynonymsFreeDictionary(token);
-        Logger.log(`[Wiki] FreeDictionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
-        return synonyms; // kể cả [] — từ không có trong dict, không fallback
+        const synonyms = await fetchSynonymsSource1(token);
+        Logger.log(`[Wiki] Source1 (DictAPI+Datamuse): "${token}" → ${synonyms.length} synonym(s)`, 'info');
+        return synonyms; // kể cả [] — từ không có hoặc không tìm được → không fallback
     } catch (err) {
-        // Bị chặn → thử nguồn 2
-        Logger.log(`[Wiki] FreeDictionary blocked (${err.message}) → fallback Wiktionary`, 'warn');
+        // Bị chặn (network/CORS) → thử nguồn 2
+        Logger.log(`[Wiki] Source1 blocked (${err.message}) → fallback Wiktionary`, 'warn');
     }
 
     // Nguồn 2: Wiktionary MediaWiki
