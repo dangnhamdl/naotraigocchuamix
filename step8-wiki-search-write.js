@@ -300,8 +300,7 @@ function isProperNoun(token, sentence) {
     const before = sentence.slice(0, idx).trimEnd();
     if (before.length === 0) return false;
     const lastChar = before[before.length - 1];
-    if (['.', '!', '?', '"', "'", '
-'].includes(lastChar)) return false;
+    if (['.', '!', '?', '"', "'", '\n'].includes(lastChar)) return false;
 
     // Viết hoa giữa câu → proper noun
     return /^[A-Z]/.test(token);
