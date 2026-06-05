@@ -224,6 +224,7 @@ async function optimizeSentence(sentence, tokenScores, lang) {
     const originalScore = scoreSentenceAll(sentence, tokenScores);
     let currentSentence = sentence;
     let currentScore    = originalScore;
+    const replacements  = []; // [{ original, replacement }]
 
     // Tuần tự từng token DAMP
     for (const dampToken of dampTokens) {
@@ -235,8 +236,9 @@ async function optimizeSentence(sentence, tokenScores, lang) {
         }
 
         // Thử từng synonym, lấy cái cho score cao nhất
-        let bestSentence = currentSentence;
-        let bestScore    = currentScore;
+        let bestSentence  = currentSentence;
+        let bestScore     = currentScore;
+        let bestSynonym   = null;
 
         for (const synonym of synonyms) {
             const regex = new RegExp(
@@ -249,14 +251,16 @@ async function optimizeSentence(sentence, tokenScores, lang) {
             if (tryScore > bestScore) {
                 bestScore    = tryScore;
                 bestSentence = trySentence;
+                bestSynonym  = synonym;
             }
         }
 
-        if (bestScore > currentScore) {
+        if (bestScore > currentScore && bestSynonym) {
             Logger.log(
                 `[Wiki Optimize] "${dampToken}" → score ${currentScore.toFixed(4)} → ${bestScore.toFixed(4)}`,
                 'success'
             );
+            replacements.push({ original: dampToken, replacement: bestSynonym });
             currentSentence = bestSentence;
             currentScore    = bestScore;
         } else {
@@ -266,7 +270,7 @@ async function optimizeSentence(sentence, tokenScores, lang) {
 
     // So sánh kết quả cuối vs câu gốc ban đầu
     if (currentScore > originalScore) {
-        return { sentence: currentSentence, score: currentScore };
+        return { sentence: currentSentence, score: currentScore, replacements };
     }
 
     Logger.log(`[Wiki Optimize] Sentence dropped (no net improvement)`, 'info');

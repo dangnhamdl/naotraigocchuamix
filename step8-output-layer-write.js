@@ -91,6 +91,51 @@ function renderSentence(el, sentence) {
     }
 }
 
+// Render câu có gạch chân bút chì cho từ được thay
+function renderSentenceWithHighlight(el, sentence, replacements) {
+    if (!replacements || replacements.length === 0) {
+        renderSentence(el, sentence);
+        return;
+    }
+
+    // Build regex để tìm tất cả từ được thay trong câu
+    // Sắp xếp theo độ dài giảm dần để tránh replace nhầm substring
+    const sorted = [...replacements].sort((a, b) => b.replacement.length - a.replacement.length);
+
+    // Split câu thành parts: text thường và từ được highlight
+    let remaining = sentence;
+    const parts   = [];
+
+    for (const { replacement } of sorted) {
+        const idx = remaining.indexOf(replacement);
+        if (idx === -1) continue;
+        if (idx > 0) parts.push({ type: 'text', content: remaining.slice(0, idx) });
+        parts.push({ type: 'highlight', content: replacement });
+        remaining = remaining.slice(idx + replacement.length);
+    }
+    if (remaining.length > 0) parts.push({ type: 'text', content: remaining });
+
+    el.innerHTML = '';
+    for (const part of parts) {
+        if (part.type === 'text') {
+            el.appendChild(document.createTextNode(part.content));
+        } else {
+            const span = document.createElement('span');
+            span.textContent = part.content;
+            // Gạch chân kiểu nét bút chì — dashed, nhạt, gần với màu mực chì
+            span.style.cssText = `
+                text-decoration: underline;
+                text-decoration-style: dashed;
+                text-decoration-color: #9ca3af;
+                text-decoration-thickness: 1px;
+                text-underline-offset: 3px;
+            `;
+            span.title = part.content; // tooltip hiện từ được thay
+            el.appendChild(span);
+        }
+    }
+}
+
 function countTokens(text) {
     return text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|\p{L}+|\p{N}+/gu)?.length || 1;
 }
@@ -268,6 +313,14 @@ class NKTgOutputWriteLayer {
 
         const optimizedText = selectedSentences.join(' ');
 
+        // Map câu → replacements (chỉ câu từ optimizedPool mới có)
+        const replacementMap = new Map();
+        for (const item of optimizedPool) {
+            if (item.replacements && item.replacements.length > 0) {
+                replacementMap.set(item.sentence, item.replacements);
+            }
+        }
+
         const displaySentences = [];
         for (const sentence of selectedSentences) {
             const lines = sentence.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -285,6 +338,7 @@ class NKTgOutputWriteLayer {
             expansionRate: base.rawInput.length > 0
                 ? ((optimizedText.length / base.rawInput.length) * 100).toFixed(1) + '%'
                 : '0%',
+            replacementMap,
             dominantTokens: base.dominantTokens,
             filteredTokens: base.filteredTokens,
             stableTokens:   base.stableTokens,
@@ -394,6 +448,8 @@ class NKTgOutputWriteLayer {
             Logger.log('[Step 8W] KaTeX load failed — fallback to plain text.', 'warn');
         }
 
+        const replacementMap = output.replacementMap || new Map();
+
         for (const sentence of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
@@ -405,7 +461,17 @@ class NKTgOutputWriteLayer {
                 line-height: 1.7;
                 font-size: 14px;
             `;
-            renderSentence(p, sentence);
+
+            // Tìm replacements cho câu này
+            // optimizedPool lưu câu đã thay — tìm theo key khớp
+            const repls = replacementMap.get(sentence) || [];
+
+            if (repls.length > 0) {
+                // Render có highlight từ được thay
+                renderSentenceWithHighlight(p, sentence, repls);
+            } else {
+                renderSentence(p, sentence);
+            }
             responseWrap.appendChild(p);
         }
 
