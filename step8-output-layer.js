@@ -251,7 +251,6 @@ class NKTgOutputLayer {
         `;
         badge.textContent = output.state;
         const modeBadge = document.createElement('span');
-        modeBadge.id = 'nktg-extraction-mode-badge';
         modeBadge.style.cssText = `
             background: #fff7ed;
             color: #d97706;
@@ -262,7 +261,7 @@ class NKTgOutputLayer {
             border: 1px solid #fed7aa;
             margin-left: auto;
         `;
-        modeBadge.textContent = 'Standard';
+        modeBadge.textContent = output.mode || 'Standard';
 
         header.appendChild(title);
         header.appendChild(badge);
@@ -359,7 +358,7 @@ class NKTgOutputLayer {
             btnCondensed.disabled = true;
             btnCondensed.textContent = '...';
             Logger.log('[Step 8] Condensed: running recursion round 2...', 'info');
-            const _cb = document.getElementById('nktg-extraction-mode-badge'); if (_cb) _cb.textContent = 'Condensed';
+            window._nktgNextMode = 'Condensed';
             await initializeNKTgQuery(output.response, 'text');
         });
 
@@ -371,7 +370,7 @@ class NKTgOutputLayer {
             btnEssence.disabled = true;
             btnEssence.textContent = '...';
             Logger.log('[Step 8] Essence: running recursion rounds 2→5...', 'info');
-            const _eb = document.getElementById('nktg-extraction-mode-badge'); if (_eb) _eb.textContent = 'Essence';
+            window._nktgNextMode = 'Essence';
             let currentText = output.response;
             for (let i = 0; i < 4; i++) {
                 Logger.log(`[Step 8] Essence round ${i + 2}/5...`, 'info');
@@ -408,6 +407,8 @@ export async function handleOutputLayer(context) {
             throw new Error("Missing context.kernel data from Step 7.");
         }
         context.output = outputLayer.generateResponse(context);
+        context.output.mode = window._nktgNextMode || 'Standard';
+        window._nktgNextMode = null;
         await outputLayer.renderToUI(context.output);
         Logger.log(
             `[Step 8 Output] State: ${context.output.state} | Compression: ${context.output.compressionRate}`,
