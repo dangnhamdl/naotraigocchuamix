@@ -236,7 +236,7 @@ class NKTgOutputLayer {
         `;
         const title = document.createElement('span');
         title.style.cssText = 'color: #d97706; font-size: 16px; font-weight: 600;';
-        title.textContent = 'NKTg INSIGHT';
+        title.textContent = 'NKTg Extraction';
 
         const badge = document.createElement('span');
         const badgeColor = output.state === 'AMPLIFYING' ? '#1f6feb' :
@@ -250,8 +250,23 @@ class NKTgOutputLayer {
             border-radius: 12px;
         `;
         badge.textContent = output.state;
+        const modeBadge = document.createElement('span');
+        modeBadge.id = 'nktg-extraction-mode-badge';
+        modeBadge.style.cssText = `
+            background: #fff7ed;
+            color: #d97706;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 12px;
+            border: 1px solid #fed7aa;
+            margin-left: auto;
+        `;
+        modeBadge.textContent = 'Standard';
+
         header.appendChild(title);
         header.appendChild(badge);
+        header.appendChild(modeBadge);
         container.appendChild(header);
 
         const meta = document.createElement('div');
@@ -344,6 +359,7 @@ class NKTgOutputLayer {
             btnCondensed.disabled = true;
             btnCondensed.textContent = '...';
             Logger.log('[Step 8] Condensed: running recursion round 2...', 'info');
+            const _cb = document.getElementById('nktg-extraction-mode-badge'); if (_cb) _cb.textContent = 'Condensed';
             await initializeNKTgQuery(output.response, 'text');
         });
 
@@ -355,6 +371,7 @@ class NKTgOutputLayer {
             btnEssence.disabled = true;
             btnEssence.textContent = '...';
             Logger.log('[Step 8] Essence: running recursion rounds 2→5...', 'info');
+            const _eb = document.getElementById('nktg-extraction-mode-badge'); if (_eb) _eb.textContent = 'Essence';
             let currentText = output.response;
             for (let i = 0; i < 4; i++) {
                 Logger.log(`[Step 8] Essence round ${i + 2}/5...`, 'info');
