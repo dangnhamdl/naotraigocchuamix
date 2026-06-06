@@ -56,9 +56,69 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 }
 
 // ============================================================================
-// NGUỒN 1 — Free Dictionary API (synonyms cấp meaning)
-// https://api.dictionaryapi.dev/api/v2/entries/en/{word}
-// Chỉ lấy synonyms cấp meaning — synonym thật sự, không lấy cấp definition
+// GLOBAL BLACKLIST — từ cổ/rác cố định từ Free Dictionary API
+// ============================================================================
+const GLOBAL_BLACKLIST = new Set([
+    'tether', 'atween', 'prostrate', 'wayfare', 'assail',
+    'commoners', 'twelvemonth', 'foretime', 'behold',
+    'laze', 'largeish', 'paginate', 'wayfare', 'foretime',
+    'withouten', 'perchance', 'mayhap', 'thrice', 'whilom',
+    'betwixt', 'amongst', 'whilst', 'perforce', 'forsooth'
+]);
+
+// ============================================================================
+// BASE FORM EXCEPTIONS — từ kết thúc -er/-est nhưng là base form thật
+// ============================================================================
+const BASE_FORM_EXCEPTIONS = new Set([
+    'her', 'over', 'under', 'after', 'butter', 'water',
+    'father', 'mother', 'sister', 'brother', 'offer', 'order',
+    'other', 'rather', 'either', 'neither', 'whether',
+    'better', 'bitter', 'letter', 'matter', 'never', 'ever',
+    'river', 'liver', 'silver', 'cover', 'discover', 'hover',
+    'power', 'tower', 'flower', 'shower', 'lower', 'answer',
+    'center', 'enter', 'winter', 'summer', 'wonder', 'tender',
+    'render', 'gender', 'danger', 'cancer', 'career', 'pioneer',
+    'proper', 'super', 'per', 'paper', 'fever', 'lever'
+]);
+
+// ============================================================================
+// IRREGULAR PAST TENSE — dạng quá khứ bất quy tắc cần skip
+// ============================================================================
+const IRREGULAR_PAST_TENSE = new Set([
+    'fell', 'saw', 'went', 'came', 'got', 'made', 'took', 'did',
+    'was', 'were', 'had', 'knew', 'grew', 'flew', 'drew', 'threw',
+    'chose', 'drove', 'wrote', 'rode', 'rose', 'bore', 'wore',
+    'spoke', 'woke', 'broke', 'froze', 'stole', 'swore', 'tore',
+    'bought', 'brought', 'thought', 'sought', 'taught', 'caught',
+    'found', 'bound', 'wound', 'stood', 'understood', 'withstood',
+    'built', 'felt', 'dealt', 'meant', 'kept', 'slept', 'wept',
+    'left', 'sent', 'spent', 'lent', 'bent', 'burnt', 'learnt',
+    'told', 'sold', 'held', 'led', 'fed', 'read', 'bled', 'fled',
+    'met', 'set', 'let', 'bet', 'cut', 'put', 'shut', 'hit', 'bit',
+    'sat', 'spat', 'ran', 'won', 'lost', 'cost', 'paid', 'laid',
+    'said', 'heard', 'seen', 'been', 'given', 'taken', 'shown'
+]);
+
+// ============================================================================
+// SUFFIX FILTER — filter synonym có suffix không phù hợp
+// ============================================================================
+const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
+
+function filterSynonymSuffixes(syn, token) {
+    const lowerSyn   = syn.toLowerCase();
+    const lowerToken = token.toLowerCase();
+    for (const suffix of BLOCKED_SUFFIXES) {
+        if (lowerSyn.endsWith(suffix) && !lowerToken.endsWith(suffix)) {
+            return false; // synonym có suffix mà token gốc không có → loại
+        }
+    }
+    return true;
+}
+
+// ============================================================================
+// NGUỒN 1 — Free Dictionary API
+// Tự detect POS từ API response → chỉ lấy synonym cùng POS
+// Qua GLOBAL_BLACKLIST + suffix filter + space/dash filter
 // ============================================================================
 async function fetchSynonymsFreeDictionary(token) {
     const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
@@ -71,10 +131,30 @@ async function fetchSynonymsFreeDictionary(token) {
     if (!res.ok) throw new Error(`FreeDictionary HTTP ${res.status}`);
 
     const data = await res.json();
-    const synonyms = new Set();
+    if (!Array.isArray(data) || data.length === 0) return [];
 
-    for (const entry of (Array.isArray(data) ? data : [])) {
+    // Detect POS: lấy meaning có nhiều definitions nhất làm POS chính
+    let targetPOS  = null;
+    let maxDefs    = 0;
+    for (const entry of data) {
         for (const meaning of (entry.meanings || [])) {
+            const defCount = (meaning.definitions || []).length;
+            if (defCount > maxDefs) {
+                maxDefs   = defCount;
+                targetPOS = meaning.partOfSpeech;
+            }
+        }
+    }
+
+    // POS không xác định được hoặc không hỗ trợ → return []
+    const SUPPORTED_POS = new Set(['noun', 'verb', 'adjective', 'adverb']);
+    if (!targetPOS || !SUPPORTED_POS.has(targetPOS.toLowerCase())) return [];
+
+    // Lấy synonym từ TẤT CẢ meanings cùng POS — cấp meaning.synonyms chỉ
+    const synonyms = new Set();
+    for (const entry of data) {
+        for (const meaning of (entry.meanings || [])) {
+            if (meaning.partOfSpeech?.toLowerCase() !== targetPOS.toLowerCase()) continue;
             for (const syn of (meaning.synonyms || [])) {
                 if (syn && syn.toLowerCase() !== token.toLowerCase()) {
                     synonyms.add(syn.trim());
@@ -83,7 +163,17 @@ async function fetchSynonymsFreeDictionary(token) {
         }
     }
 
-    return [...synonyms].slice(0, 10);
+    // Áp dụng bộ lọc 3 tầng
+    return [...synonyms].filter(syn => {
+        const lower = syn.toLowerCase();
+        // Tầng 1: Blacklist
+        if (GLOBAL_BLACKLIST.has(lower)) return false;
+        // Tầng 2: Cụm từ / gạch ngang
+        if (syn.includes(' ') || syn.includes('-')) return false;
+        // Tầng 3: Suffix filter
+        if (!filterSynonymSuffixes(syn, token)) return false;
+        return true;
+    }).slice(0, 10);
 }
 
 // ============================================================================
@@ -309,7 +399,6 @@ function isProperNoun(token, sentence) {
 // ============================================================================
 // HELPER — Kiểm tra token có ở base form không
 // Chỉ thay synonym khi token ở dạng nguyên thể (base form)
-// Skip nếu token đã chia: -ed, -ing, -s/-es (trừ một số ngoại lệ)
 // ============================================================================
 function isBaseForm(token) {
     const t = token.toLowerCase();
@@ -317,15 +406,32 @@ function isBaseForm(token) {
     // Quá ngắn → không xác định được
     if (t.length < 3) return false;
 
-    // Dạng -ing → đang chia (gerund/present participle)
+    // Exception list — từ kết thúc -er/-est nhưng là base form thật
+    if (BASE_FORM_EXCEPTIONS.has(t)) return true;
+
+    // Irregular past tense — dạng quá khứ bất quy tắc
+    if (IRREGULAR_PAST_TENSE.has(t)) return false;
+
+    // Dạng -ing → gerund/present participle
     if (t.endsWith('ing') && t.length > 4) return false;
 
     // Dạng -ed → past tense/past participle
     if (t.endsWith('ed') && t.length > 3) return false;
 
+    // Dạng -er → comparative (faster, bigger...)
+    if (t.endsWith('er') && t.length > 4) return false;
+
+    // Dạng -est → superlative (fastest, biggest...)
+    if (t.endsWith('est') && t.length > 5) return false;
+
     // Dạng -s/-es → plural noun hoặc 3rd person singular verb
-    // Ngoại lệ: "this", "his", "was", "has", "as", "us", "bus"... → giữ lại
-    const sExceptions = new Set(['this','his','was','has','as','us','bus','yes','its','plus','thus','versus','campus','focus','bonus','virus','status','census','chorus','corpus','exodus','nexus','nexus','prospectus','radius','stimulus','syllabus']);
+    const sExceptions = new Set([
+        'this','his','was','has','as','us','bus','yes','its','plus',
+        'thus','versus','campus','focus','bonus','virus','status',
+        'census','chorus','corpus','exodus','nexus','prospectus',
+        'radius','stimulus','syllabus','basis','crisis','thesis',
+        'analysis','axis','hypothesis','oasis','synopsis'
+    ]);
     if (t.endsWith('s') && t.length > 3 && !sExceptions.has(t)) return false;
 
     return true;
