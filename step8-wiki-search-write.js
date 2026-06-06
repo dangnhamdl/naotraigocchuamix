@@ -448,7 +448,7 @@ async function optimizeSentence(sentence, tokenScores, lang) {
 
         for (const synonym of synonyms) {
             const regex = new RegExp(
-                dampToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+                '\\b' + dampToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b',
                 'gi'
             );
             const trySentence = currentSentence.replace(regex, synonym);
