@@ -180,29 +180,46 @@ async function fetchSynonymsWiktionary(token) {
     if (data.error) return [];
 
     const wikitext = data.parse?.wikitext?.['*'] || '';
+
+    // Kiểm tra từ hợp lệ — loại namespace prefix, cụm từ, ký tự lạ
+    function isValidSyn(word) {
+        if (!word) return false;
+        if (word.includes(':')) return false;          // Thesaurus:xxx, Category:xxx
+        if (word.includes(' ')) return false;          // cụm từ
+        if (word.includes('-')) return false;          // từ ghép
+        if (word.includes('=')) return false;          // template param
+        if (word.toLowerCase() === token.toLowerCase()) return false;
+        if (word.length < 2 || word.length > 20) return false;
+        if (!/^[a-zA-Z]+$/.test(word)) return false;  // chỉ chữ cái Latin
+        return true;
+    }
+
     const synonyms = new Set();
 
+    // Chỉ lấy từ trong {{syn|en|...}} — nguồn đáng tin cậy nhất
     const synTemplates = wikitext.matchAll(/\{\{syn\|en\|([^}]+)\}\}/gi);
     for (const match of synTemplates) {
         for (const part of match[1].split('|')) {
             const word = part.trim().replace(/^[\s*#:]+/, '');
-            if (word && !word.includes('=') && word.toLowerCase() !== token.toLowerCase())
-                synonyms.add(word);
+            if (isValidSyn(word)) synonyms.add(word);
         }
     }
-    const linkTemplates = wikitext.matchAll(/\{\{l\|en\|([^|}]+)\}\}/gi);
-    for (const match of linkTemplates) {
-        const word = match[1].trim();
-        if (word && word.toLowerCase() !== token.toLowerCase()) synonyms.add(word);
-    }
-    const synSection = wikitext.match(/={2,4}Synonyms={2,4}([\s\S]*?)(?:={2,4}|$)/i);
+
+    // Chỉ lấy {{l|en|...}} và [[...]] trong section Synonyms — tránh lấy lan sang section khác
+    const synSection = wikitext.match(/={2,4}Synonyms={2,4}([\s\S]*?)(?:={2,4}[^=])/i);
     if (synSection) {
+        const linkTemplates = synSection[1].matchAll(/\{\{l\|en\|([^|}]+)\}\}/gi);
+        for (const match of linkTemplates) {
+            const word = match[1].trim();
+            if (isValidSyn(word)) synonyms.add(word);
+        }
         const wikiLinks = synSection[1].matchAll(/\[\[([^\]|#]+)/g);
         for (const match of wikiLinks) {
             const word = match[1].trim();
-            if (word && word.toLowerCase() !== token.toLowerCase()) synonyms.add(word);
+            if (isValidSyn(word)) synonyms.add(word);
         }
     }
+
     return [...synonyms].slice(0, 10);
 }
 
