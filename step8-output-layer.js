@@ -408,8 +408,8 @@ export async function handleOutputLayer(context) {
         }
         context.output = outputLayer.generateResponse(context);
         context.output.mode = window._nktgNextMode || 'Standard';
-        window._nktgNextMode = null;
         await outputLayer.renderToUI(context.output);
+        window._nktgNextMode = null;
         Logger.log(
             `[Step 8 Output] State: ${context.output.state} | Compression: ${context.output.compressionRate}`,
             "success"
