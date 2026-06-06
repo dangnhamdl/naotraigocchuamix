@@ -360,6 +360,7 @@ class NKTgOutputLayer {
             Logger.log('[Step 8] Condensed: running recursion round 2...', 'info');
             window._nktgNextMode = 'Condensed';
             await initializeNKTgQuery(output.response, 'text');
+            window._nktgNextMode = null;
         });
 
         const btnEssence = document.createElement('button');
@@ -374,9 +375,11 @@ class NKTgOutputLayer {
             let currentText = output.response;
             for (let i = 0; i < 4; i++) {
                 Logger.log(`[Step 8] Essence round ${i + 2}/5...`, 'info');
+                window._nktgNextMode = 'Essence';
                 await initializeNKTgQuery(currentText, 'text');
                 currentText = document.getElementById('outputPanel')?.__nktgLastResponse || currentText;
             }
+            window._nktgNextMode = null;
         });
 
         const btnScrollUp = document.createElement('button');
@@ -409,7 +412,6 @@ export async function handleOutputLayer(context) {
         context.output = outputLayer.generateResponse(context);
         context.output.mode = window._nktgNextMode || 'Standard';
         await outputLayer.renderToUI(context.output);
-        window._nktgNextMode = null;
         Logger.log(
             `[Step 8 Output] State: ${context.output.state} | Compression: ${context.output.compressionRate}`,
             "success"
