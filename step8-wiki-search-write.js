@@ -1,49 +1,19 @@
 /**
  * ============================================================================
- * NKTg AI SYSTEM - STEP 8: WIKI SEARCH WRITE (SYNONYM OPTIMIZER)
+ * NKTg AI SYSTEM - STEP 8: WIKI SEARCH (SYNONYM FINDER)
  * ============================================================================
- * File: /nktg-ai/step8-wiki-search-write.js
- * Purpose: Tối ưu các câu bị bỏ bằng cách thay token DAMP → synonym
+ * Chức năng duy nhất: tìm synonym cho token
+ * Export: fetchSynonyms(token, lang) → Promise<string[]>
  *
- * Fallback chain (hiện tại tiếng Anh):
- *   Nguồn 1: Free Dictionary API  — public, CORS OK, JSON có synonyms sẵn
- *   Nguồn 2: Wiktionary MediaWiki — fallback khi nguồn 1 bị chặn
- *   Nguồn 3: từ điển riêng       — bổ sung sau
- *
- * Phân biệt:
- *   bị chặn   → throw  → thử nguồn kế
- *   không có  → return [] → câu bị loại (không fallback)
- *
- * Export:
- *   optimizeRejectedSentences(base) → Promise<optimizedPool[]>
- *   optimizedPool: [{ sentence: string, score: number }]
+ * Fallback chain:
+ *   Nguồn 1: Free Dictionary API  — public, CORS OK
+ *   Nguồn 2: dictionaryapi.dev + Datamuse — fallback
+ *   Nguồn 3: Wiktionary MediaWiki — fallback
  */
 
 import { Logger } from './step1-init.js';
 
 const TIMEOUT_MS = 6000;
-
-// ============================================================================
-// SCORE SENTENCE — tổng energy tất cả token, không filter state
-// ============================================================================
-function countTokens(text) {
-    return text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|\p{L}+|\p{N}+/gu)?.length || 1;
-}
-
-function scoreSentenceAll(sentence, tokenScores) {
-    const lower = sentence.toLowerCase();
-    let totalEnergy = 0;
-    let matchCount  = 0;
-    for (const [token, data] of Object.entries(tokenScores)) {
-        if (lower.includes(token.toLowerCase())) {
-            totalEnergy += Math.max(0, data.energy + 3);
-            matchCount++;
-        }
-    }
-    const wordCount = countTokens(sentence);
-    const density   = matchCount > 0 ? matchCount / wordCount : 0;
-    return totalEnergy * density;
-}
 
 // ============================================================================
 // FETCH VỚI TIMEOUT
@@ -58,8 +28,6 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 // ============================================================================
 // GLOBAL BLACKLIST — 2 nhóm: từ cổ/archaic + data noise từ API
 // ============================================================================
-
-// Nhóm 1: Từ cổ/archaic — không dùng trong văn bản hiện đại
 const ARCHAIC_WORDS = [
     'tether', 'atween', 'prostrate', 'wayfare', 'assail',
     'twelvemonth', 'foretime', 'behold', 'laze',
@@ -68,22 +36,16 @@ const ARCHAIC_WORDS = [
     'forsooth', 'henceforth', 'thereupon', 'whereupon'
 ];
 
-// Nhóm 2: Context noise — đúng POS, đúng từ điển nhưng sai ngữ cảnh thông thường
 const CONTEXT_NOISE = [
-    'pristine',   // thay "new" — quá trang trọng, sai vibe
-    'terminal',   // thay "last" — nghĩa cuối đời/chết chóc
-    'commoners',  // thay "people" — ngữ cảnh xã hội không phù hợp
-    'bergh',      // rác từ API
-    'dominator',  // thay adjective bằng noun
-    'paginate',   // thay "page" — sai ngữ cảnh
+    'pristine', 'terminal', 'commoners', 'bergh',
+    'dominator', 'paginate', 'denomination', 'eke',
+    'flashy',
 ];
 
 const GLOBAL_BLACKLIST = new Set([...ARCHAIC_WORDS, ...CONTEXT_NOISE]);
 
 // ============================================================================
-// TẦNG 1 — Local Pre-filter (chặn nhanh trước khi gọi API)
-// Loại token có suffix -ing/-ed/-er/-est rõ ràng
-// Exception: từ ngắn phổ biến kết thúc -er/-est là base form thật
+// PRE-FILTER — chặn token không phải base form trước khi gọi API
 // ============================================================================
 const PRE_FILTER_EXCEPTIONS = new Set([
     'her', 'over', 'under', 'after', 'butter', 'water',
@@ -98,31 +60,24 @@ const PRE_FILTER_EXCEPTIONS = new Set([
 function preFilterToken(token) {
     const t = token.toLowerCase();
     if (t.length < 3) return false;
-    if (PRE_FILTER_EXCEPTIONS.has(t)) return true; // exception → pass
-
-    // Block dạng chia rõ ràng
+    if (PRE_FILTER_EXCEPTIONS.has(t)) return true;
     if (t.endsWith('ing') && t.length > 4) return false;
     if (t.endsWith('ed')  && t.length > 3) return false;
     if (t.endsWith('er')  && t.length > 4) return false;
     if (t.endsWith('est') && t.length > 5) return false;
-
-    // Block plural/3rd person -s/-es rõ ràng
     const sExceptions = new Set([
         'this','his','was','has','as','us','bus','yes','its','plus',
         'thus','versus','campus','focus','bonus','virus','status',
         'census','chorus','corpus','nexus','radius','stimulus'
     ]);
     if (t.endsWith('s') && t.length > 3 && !sExceptions.has(t)) return false;
-
     return true;
 }
 
 // ============================================================================
 // NGUỒN 1 — Free Dictionary API
-// 4 tầng: Pre-filter → API-as-Truth → POS Match → Final Sanitization
 // ============================================================================
 async function fetchSynonymsFreeDictionary(token) {
-    // Tầng 1: Local Pre-filter — chặn nhanh, không gọi API
     if (!preFilterToken(token)) return [];
 
     const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
@@ -134,17 +89,13 @@ async function fetchSynonymsFreeDictionary(token) {
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0 || !data[0].word) return [];
 
-    // Tầng 2: API-as-Truth — nếu word trả về khác token → dạng chia → loại
+    // API-as-Truth
     if (data[0].word.toLowerCase() !== token.toLowerCase()) return [];
 
-    // Tầng 3: POS Match — tìm POS chính từ meaning có nhiều SYNONYMS nhất
-    // Dùng synonym count thay vì definition count — meaning có nhiều synonym
-    // là nghĩa "cốt lõi" nhất, ít bị nhiễu POS chéo hơn
+    // POS Match — chỉ lấy synonym nếu token có 1 POS duy nhất
     const SUPPORTED_POS = new Set(['noun', 'verb', 'adjective', 'adverb']);
-
-    // Đếm synonym theo từng POS
-    const posSynCount = new Map(); // POS → tổng số synonym
-    const posSynMap   = new Map(); // POS → Set synonym
+    const posSynCount = new Map();
+    const posSynMap   = new Map();
     for (const entry of data) {
         for (const meaning of (entry.meanings || [])) {
             const pos = meaning.partOfSpeech?.toLowerCase();
@@ -156,28 +107,19 @@ async function fetchSynonymsFreeDictionary(token) {
         }
     }
 
-    if (posSynCount.size === 0) return []; // không có POS nào có synonym
+    if (posSynCount.size === 0) return [];
+    if (posSynCount.size > 1)   return []; // multi-POS → không chắc → bỏ
 
-    // Safety check: nếu token có nhiều POS → không xác định được POS trong câu
-    // → return [] để tránh thay sai (theo triết lý NKTg: đúng quan trọng hơn nhiều)
-    if (posSynCount.size > 1) return [];
-
-    // Chỉ có 1 POS duy nhất → chắc chắn đúng POS
     const targetPOS = [...posSynCount.keys()][0];
+    const synonyms  = posSynMap.get(targetPOS) || new Set();
 
-    // Lấy synonym từ POS đã chọn
-    const synonyms = posSynMap.get(targetPOS) || new Set();
-
-    // Tầng 4: Final Sanitization
-    const lowerToken = token.toLowerCase();
+    // Final sanitization
+    const lowerToken     = token.toLowerCase();
     const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
     return [...synonyms].filter(syn => {
         const lower = syn.toLowerCase();
-        // Blacklist
         if (GLOBAL_BLACKLIST.has(lower)) return false;
-        // Cụm từ / gạch ngang
         if (syn.includes(' ') || syn.includes('-')) return false;
-        // Suffix guard
         for (const suffix of BLOCKED_SUFFIXES) {
             if (lower.endsWith(suffix) && !lowerToken.endsWith(suffix)) return false;
         }
@@ -186,190 +128,116 @@ async function fetchSynonymsFreeDictionary(token) {
 }
 
 // ============================================================================
-// NGUỒN 2 — dictionaryapi.dev (POS) + Datamuse (synonyms filter theo POS)
-//
-// Bước 1: dictionaryapi.dev → xác định POS của token
-//   GET https://api.dictionaryapi.dev/api/v2/entries/en/{word}
-//   Lấy partOfSpeech từ meaning đầu tiên có nhiều definitions nhất
-//
-// Bước 2: Datamuse → lấy synonyms đúng POS
-//   GET https://api.datamuse.com/words?rel_syn={word}&md=p
-//   Filter: chỉ giữ synonym có tags chứa đúng POS của token
-//
-// Map POS: noun→n | verb→v | adjective→adj | adverb→adv
+// NGUỒN 2 — dictionaryapi.dev + Datamuse
 // ============================================================================
-
-// Map partOfSpeech từ dictionaryapi.dev sang Datamuse tag
 const POS_MAP = {
-    'noun':      'n',
-    'verb':      'v',
-    'adjective': 'adj',
-    'adverb':    'adv',
-    'pronoun':   'n',   // pronoun xử lý như noun
+    'noun': 'n', 'verb': 'v', 'adjective': 'adj', 'adverb': 'adv', 'pronoun': 'n',
 };
 
-async function fetchSynonymsSource1(token) {
-    // ── Bước 1: xác định POS từ dictionaryapi.dev ──
+async function fetchSynonymsSource2(token) {
     const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
-
-    const dictRes = await fetchWithTimeout(dictUrl, {
-        headers: { 'Accept': 'application/json' }
-    });
-
-    // 404 = từ không có trong từ điển → return [] (không phải bị chặn)
+    const dictRes = await fetchWithTimeout(dictUrl, { headers: { 'Accept': 'application/json' } });
     if (dictRes.status === 404) return [];
-
-    // Lỗi mạng/server → throw để fallback nguồn 2
     if (!dictRes.ok) throw new Error(`DictAPI HTTP ${dictRes.status}`);
-
     const dictData = await dictRes.json();
     if (!Array.isArray(dictData) || dictData.length === 0) return [];
 
-    // Lấy POS từ meaning có nhiều definitions nhất — meaning chính của từ
     let detectedPOS = null;
     let maxDefs = 0;
     for (const entry of dictData) {
         for (const meaning of (entry.meanings || [])) {
             const defCount = (meaning.definitions || []).length;
-            if (defCount > maxDefs) {
-                maxDefs = defCount;
-                detectedPOS = meaning.partOfSpeech;
-            }
+            if (defCount > maxDefs) { maxDefs = defCount; detectedPOS = meaning.partOfSpeech; }
         }
     }
-
-    if (!detectedPOS) return []; // không xác định được POS → không thay
+    if (!detectedPOS) return [];
 
     const datamuseTag = POS_MAP[detectedPOS.toLowerCase()];
-    if (!datamuseTag) return []; // POS không hỗ trợ (conjunction, preposition...) → bỏ qua
+    if (!datamuseTag) return [];
 
-    // ── Bước 2: lấy synonyms từ Datamuse, filter theo POS ──
     const datamuseUrl = `https://api.datamuse.com/words?rel_syn=${encodeURIComponent(token.toLowerCase())}&md=p&max=20`;
-
-    const datamuseRes = await fetchWithTimeout(datamuseUrl, {
-        headers: { 'Accept': 'application/json' }
-    });
-
+    const datamuseRes = await fetchWithTimeout(datamuseUrl, { headers: { 'Accept': 'application/json' } });
     if (!datamuseRes.ok) throw new Error(`Datamuse HTTP ${datamuseRes.status}`);
 
     const datamuseData = await datamuseRes.json();
-
-    // Filter: chỉ giữ synonym cùng POS với token gốc
-    // Bỏ cụm từ nhiều hơn 1 từ (có space)
-    const synonyms = (Array.isArray(datamuseData) ? datamuseData : [])
-        .filter(item => {
-            if (!item.word) return false;
-            if (item.word.includes(' ')) return false; // bỏ cụm từ
-            if (item.word.toLowerCase() === token.toLowerCase()) return false;
-            const tags = item.tags || [];
-            return tags.includes(datamuseTag);
-        })
+    return (Array.isArray(datamuseData) ? datamuseData : [])
+        .filter(item => item.word && !item.word.includes(' ') &&
+            item.word.toLowerCase() !== token.toLowerCase() &&
+            (item.tags || []).includes(datamuseTag))
         .map(item => item.word.trim())
         .slice(0, 10);
-
-    return synonyms;
 }
 
 // ============================================================================
-// NGUỒN 2 — Wiktionary MediaWiki API
-// Parse wikitext lấy section Synonyms
-// https://en.wiktionary.org/w/api.php?action=parse&page={token}&prop=wikitext&format=json&origin=*
+// NGUỒN 3 — Wiktionary
 // ============================================================================
 async function fetchSynonymsWiktionary(token) {
     const url = `https://en.wiktionary.org/w/api.php?` +
         `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
-
-    const res = await fetchWithTimeout(url, {
-        headers: { 'Accept': 'application/json' }
-    });
-
+    const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`Wiktionary HTTP ${res.status}`);
-
     const data = await res.json();
-
-    if (data.error) return []; // trang không tồn tại → không phải bị chặn
+    if (data.error) return [];
 
     const wikitext = data.parse?.wikitext?.['*'] || '';
-
-    // Tìm section ====Synonyms==== hoặc ===Synonyms===
-    // Wikitext synonym format: * {{l|en|word}} hoặc [[word]] hoặc {{syn|en|word1|word2}}
     const synonyms = new Set();
 
-    // Extract từ {{syn|en|word1|word2|...}}
     const synTemplates = wikitext.matchAll(/\{\{syn\|en\|([^}]+)\}\}/gi);
     for (const match of synTemplates) {
-        const parts = match[1].split('|');
-        for (const part of parts) {
+        for (const part of match[1].split('|')) {
             const word = part.trim().replace(/^[\s*#:]+/, '');
-            if (word && !word.includes('=') && word.toLowerCase() !== token.toLowerCase()) {
+            if (word && !word.includes('=') && word.toLowerCase() !== token.toLowerCase())
                 synonyms.add(word);
-            }
         }
     }
-
-    // Extract từ {{l|en|word}}
     const linkTemplates = wikitext.matchAll(/\{\{l\|en\|([^|}]+)\}\}/gi);
     for (const match of linkTemplates) {
         const word = match[1].trim();
-        if (word && word.toLowerCase() !== token.toLowerCase()) {
-            synonyms.add(word);
-        }
+        if (word && word.toLowerCase() !== token.toLowerCase()) synonyms.add(word);
     }
-
-    // Chỉ lấy synonyms trong section Synonyms
     const synSection = wikitext.match(/={2,4}Synonyms={2,4}([\s\S]*?)(?:={2,4}|$)/i);
     if (synSection) {
         const wikiLinks = synSection[1].matchAll(/\[\[([^\]|#]+)/g);
         for (const match of wikiLinks) {
             const word = match[1].trim();
-            if (word && word.toLowerCase() !== token.toLowerCase()) {
-                synonyms.add(word);
-            }
+            if (word && word.toLowerCase() !== token.toLowerCase()) synonyms.add(word);
         }
     }
-
     return [...synonyms].slice(0, 10);
 }
 
 // ============================================================================
-// FALLBACK CHAIN
-// Nguồn 1 (FreeDictionary) → bị chặn → Nguồn 2 (Wiktionary) → bị chặn → []
-// Nếu nguồn trả về [] (không tìm thấy) → return [] ngay, không fallback
+// FALLBACK CHAIN — public export
 // ============================================================================
-async function fetchSynonyms(token, lang) {
-    // Bỏ qua token quá ngắn, số, stop words phổ biến
-    const stopWords = new Set([
-        'a','an','the','is','are','was','were','be','been','being',
-        'it','its','this','that','these','those','i','we','you','he',
-        'she','they','and','or','but','not','for','in','on','at','to',
-        'of','as','by','with','from','up','out','if','do','did','has',
-        'had','have','will','would','could','should','may','might','s'
-    ]);
+const stopWords = new Set([
+    'a','an','the','is','are','was','were','be','been','being',
+    'it','its','this','that','these','those','i','we','you','he',
+    'she','they','and','or','but','not','for','in','on','at','to',
+    'of','as','by','with','from','up','out','if','do','did','has',
+    'had','have','will','would','could','should','may','might','s'
+]);
 
+export async function fetchSynonyms(token, lang) {
     if (token.length < 3) return [];
     if (/^\d+$/.test(token)) return [];
     if (stopWords.has(token.toLowerCase())) return [];
 
-    // Nguồn 1: Free Dictionary API — synonyms cấp meaning
     try {
         const synonyms = await fetchSynonymsFreeDictionary(token);
         Logger.log(`[Wiki] FreeDictionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
-        return synonyms; // kể cả [] — không tìm được → không fallback
+        return synonyms;
     } catch (err) {
-        // Bị chặn → thử nguồn 2
         Logger.log(`[Wiki] FreeDictionary blocked (${err.message}) → fallback Source2`, 'warn');
     }
 
-    // Nguồn 2: dictionaryapi.dev (POS) + Datamuse
     try {
-        const synonyms = await fetchSynonymsSource1(token);
+        const synonyms = await fetchSynonymsSource2(token);
         Logger.log(`[Wiki] Source2 (DictAPI+Datamuse): "${token}" → ${synonyms.length} synonym(s)`, 'info');
         return synonyms;
     } catch (err) {
         Logger.log(`[Wiki] Source2 blocked (${err.message}) → fallback Wiktionary`, 'warn');
     }
 
-    // Nguồn 3: Wiktionary MediaWiki
     try {
         const synonyms = await fetchSynonymsWiktionary(token);
         Logger.log(`[Wiki] Wiktionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
@@ -378,168 +246,5 @@ async function fetchSynonyms(token, lang) {
         Logger.log(`[Wiki] Wiktionary blocked (${err.message}) → no more sources`, 'warn');
     }
 
-    // Nguồn 3: từ điển riêng — bổ sung sau
-    // try { const synonyms = await fetchSynonymsCustom(token, lang); return synonyms; } catch { ... }
-
     return [];
-}
-
-// ============================================================================
-// HELPER — Phát hiện proper noun (viết hoa giữa câu, không phải đầu câu)
-// ============================================================================
-function isProperNoun(token, sentence) {
-    // Bỏ qua nếu token viết thường hoàn toàn
-    if (token === token.toLowerCase()) return false;
-
-    // Tìm vị trí token trong câu
-    const idx = sentence.indexOf(token);
-    if (idx === -1) return false;
-
-    // Nếu đứng đầu câu (idx === 0 hoặc chỉ có whitespace/quote trước) → không phải proper noun
-    const before = sentence.slice(0, idx).trimEnd();
-    if (before.length === 0) return false;
-    const lastChar = before[before.length - 1];
-    if (['.', '!', '?', '"', "'", '\n'].includes(lastChar)) return false;
-
-    // Viết hoa giữa câu → proper noun
-    return /^[A-Z]/.test(token);
-}
-
-// ============================================================================
-// HELPER — Lọc synonyms: bỏ cụm từ (có space), bỏ từ quá hiếm/cổ
-// ============================================================================
-function filterSynonyms(synonyms, originalToken) {
-    return synonyms.filter(syn => {
-        if (!syn) return false;
-        if (syn.includes(' ')) return false;       // bỏ cụm từ
-        if (syn.includes('-')) return false;       // bỏ từ ghép có gạch ngang
-        if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
-        if (syn.length < 2) return false;
-        return true;
-    });
-}
-
-// ============================================================================
-// TỐI ƯU 1 CÂU — xử lý tuần tự từng token DAMP
-// ============================================================================
-async function optimizeSentence(sentence, tokenScores, lang) {
-    // Tìm token DAMP xuất hiện trong câu
-    // Bỏ qua proper noun (viết hoa giữa câu)
-    const dampTokens = Object.entries(tokenScores)
-        .filter(([token, data]) =>
-            data.state === 'DAMPING' &&
-            sentence.toLowerCase().includes(token.toLowerCase()) &&
-            !isProperNoun(token, sentence)   // ← bỏ proper noun
-        )
-        .map(([token]) => token);
-
-    if (dampTokens.length === 0) return null;
-
-    const originalScore = scoreSentenceAll(sentence, tokenScores);
-    let currentSentence = sentence;
-    let currentScore    = originalScore;
-    const replacements  = []; // [{ original, replacement }]
-
-    // Tuần tự từng token DAMP
-    for (const dampToken of dampTokens) {
-        // Tầng 1: Pre-filter token — chặn dạng chia trước khi gọi API
-        if (!preFilterToken(dampToken)) {
-            Logger.log(`[Wiki Optimize] "${dampToken}" → not base form, skip`, 'info');
-            continue;
-        }
-
-        const rawSynonyms = await fetchSynonyms(dampToken, lang);
-
-        // Lọc: bỏ cụm từ có space/gạch ngang
-        const synonyms = filterSynonyms(rawSynonyms, dampToken);
-
-        if (synonyms.length === 0) {
-            Logger.log(`[Wiki Optimize] "${dampToken}" → no synonyms after filter, skip`, 'info');
-            continue;
-        }
-
-        // Thử từng synonym, lấy cái cho score cao nhất
-        let bestSentence  = currentSentence;
-        let bestScore     = currentScore;
-        let bestSynonym   = null;
-
-        for (const synonym of synonyms) {
-            const regex = new RegExp(
-                '\\b' + dampToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b',
-                'gi'
-            );
-            const trySentence = currentSentence.replace(regex, synonym);
-            const tryScore    = scoreSentenceAll(trySentence, tokenScores);
-
-            if (tryScore > bestScore) {
-                bestScore    = tryScore;
-                bestSentence = trySentence;
-                bestSynonym  = synonym;
-            }
-        }
-
-        if (bestScore > currentScore && bestSynonym) {
-            Logger.log(
-                `[Wiki Optimize] "${dampToken}" → score ${currentScore.toFixed(4)} → ${bestScore.toFixed(4)}`,
-                'success'
-            );
-            replacements.push({ original: dampToken, replacement: bestSynonym });
-            currentSentence = bestSentence;
-            currentScore    = bestScore;
-        } else {
-            Logger.log(`[Wiki Optimize] "${dampToken}" → no improvement`, 'info');
-        }
-    }
-
-    // So sánh kết quả cuối vs câu gốc ban đầu
-    if (currentScore > originalScore) {
-        return {
-            sentence: currentSentence,         // câu đã thay từ — dùng để render
-            originalSentence: sentence,         // câu gốc — key trong sentenceScores
-            score: currentScore,
-            replacements
-        };
-    }
-
-    Logger.log(`[Wiki Optimize] Sentence dropped (no net improvement)`, 'info');
-    return null;
-}
-
-// ============================================================================
-// MAIN EXPORT
-// ============================================================================
-export async function optimizeRejectedSentences(base) {
-    const { baseSentences, sentenceScores, tokenScores } = base;
-    const lang = base.lang || 'en';
-
-    const rejectedSentences = Object.keys(sentenceScores)
-        .filter(s => !baseSentences.includes(s));
-
-    Logger.log(`[Wiki Search] Bắt đầu tối ưu ${rejectedSentences.length} câu bị bỏ...`, 'info');
-
-    const optimizedPool = [];
-
-    for (let i = 0; i < rejectedSentences.length; i++) {
-        const sentence = rejectedSentences[i];
-        Logger.log(
-            `[Wiki Search] Câu ${i + 1}/${rejectedSentences.length}: "${sentence.slice(0, 50)}..."`,
-            'info'
-        );
-
-        const result = await optimizeSentence(sentence, tokenScores, lang);
-
-        if (result) {
-            optimizedPool.push(result);
-            Logger.log(`[Wiki Search] ✓ Câu ${i + 1} tối ưu OK → pool (${optimizedPool.length})`, 'success');
-        } else {
-            Logger.log(`[Wiki Search] ✗ Câu ${i + 1} bị loại`, 'info');
-        }
-    }
-
-    Logger.log(
-        `[Wiki Search] Hoàn tất: ${optimizedPool.length}/${rejectedSentences.length} câu vào optimizedPool`,
-        'success'
-    );
-
-    return optimizedPool;
 }
