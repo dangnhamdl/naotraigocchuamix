@@ -406,7 +406,7 @@ class NKTgOutputWriteLayer {
     }
 
     // ------------------------------------------------------------------
-    // generateBase — 38.2% câu chuẩn, y hệt Não Trái
+    // generateBase — 61.8.% câu chuẩn, y hệt Não Trái chỉ khác tỷ lệ
     // Kết quả nội bộ — KHÔNG render trực tiếp
     // ------------------------------------------------------------------
     generateBase(context) {
@@ -420,7 +420,7 @@ class NKTgOutputWriteLayer {
         const stableRatio = kernel.stable_ratio;
 
         const totalSentences = Object.keys(sentenceScores).length;
-        const totalKeep  = Math.ceil(totalSentences * 0.382);
+        const totalKeep  = Math.ceil(totalSentences * 0.618);
         const ampKeep    = Math.round(totalKeep * ampRatio);
         const dampKeep   = Math.round(totalKeep * dampRatio);
         const stableKeep = Math.max(0, totalKeep - ampKeep - dampKeep);
@@ -578,7 +578,7 @@ class NKTgOutputWriteLayer {
 
         const title = document.createElement('span');
         title.style.cssText = 'color: #4A9B2F; font-size: 16px; font-weight: 600;';
-        title.textContent = 'NKTg WRITE';
+        title.textContent = 'NKTg Addition';
 
         const badge = document.createElement('span');
         const badgeColor = output.state === 'AMPLIFYING' ? '#1f6feb' :
@@ -604,7 +604,7 @@ class NKTgOutputWriteLayer {
             border: 1px solid #86efac;
             margin-left: auto;
         `;
-        modeBadge.textContent = output.mixMode === 'standard' ? 'Standard' :
+        modeBadge.textContent = output.mixMode === 'standard' ? 'Refined' :
                                 output.mixMode === 'expanded' ? 'Expanded' : 'Comprehensive';
 
         header.appendChild(title);
@@ -789,7 +789,7 @@ export async function handleOutputLayerWrite(context) {
             throw new Error('Missing context.kernel data from Step 7.');
         }
 
-        // Bước 1: lấy 38.2% câu chuẩn — nội bộ, không render
+        // Bước 1: lấy 61.8% câu chuẩn — nội bộ, không render
         const base = outputWriteLayer.generateBase(context);
         Logger.log('[Step 8W] Base generated — passing to mix layer...', 'info');
 
