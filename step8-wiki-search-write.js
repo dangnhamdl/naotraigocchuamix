@@ -137,33 +137,40 @@ async function fetchSynonymsFreeDictionary(token) {
     // Tầng 2: API-as-Truth — nếu word trả về khác token → dạng chia → loại
     if (data[0].word.toLowerCase() !== token.toLowerCase()) return [];
 
-    // Tầng 3: POS Match — tìm POS chính (meaning có nhiều definitions nhất)
-    let targetPOS = null;
-    let maxDefs   = 0;
+    // Tầng 3: POS Match — tìm POS chính từ meaning có nhiều SYNONYMS nhất
+    // Dùng synonym count thay vì definition count — meaning có nhiều synonym
+    // là nghĩa "cốt lõi" nhất, ít bị nhiễu POS chéo hơn
     const SUPPORTED_POS = new Set(['noun', 'verb', 'adjective', 'adverb']);
-    for (const entry of data) {
-        for (const meaning of (entry.meanings || [])) {
-            const defCount = (meaning.definitions || []).length;
-            if (defCount > maxDefs) {
-                maxDefs   = defCount;
-                targetPOS = meaning.partOfSpeech?.toLowerCase();
-            }
-        }
-    }
-    if (!targetPOS || !SUPPORTED_POS.has(targetPOS)) return [];
 
-    // Thu thập synonym từ tất cả meanings cùng POS
-    const synonyms = new Set();
+    // Đếm synonym theo từng POS
+    const posSynCount = new Map(); // POS → tổng số synonym
+    const posSynMap   = new Map(); // POS → Set synonym
     for (const entry of data) {
         for (const meaning of (entry.meanings || [])) {
-            if (meaning.partOfSpeech?.toLowerCase() !== targetPOS) continue;
-            for (const syn of (meaning.synonyms || [])) {
-                if (syn && syn.toLowerCase() !== token.toLowerCase()) {
-                    synonyms.add(syn.trim());
-                }
-            }
+            const pos = meaning.partOfSpeech?.toLowerCase();
+            if (!pos || !SUPPORTED_POS.has(pos)) continue;
+            const syns = (meaning.synonyms || []).filter(s => s && s.toLowerCase() !== token.toLowerCase());
+            if (!posSynMap.has(pos)) posSynMap.set(pos, new Set());
+            for (const s of syns) posSynMap.get(pos).add(s.trim());
+            posSynCount.set(pos, (posSynCount.get(pos) || 0) + syns.length);
         }
     }
+
+    if (posSynCount.size === 0) return []; // không có POS nào có synonym
+
+    // Chọn POS có nhiều synonym nhất
+    let targetPOS  = null;
+    let maxSynCount = 0;
+    for (const [pos, count] of posSynCount) {
+        if (count > maxSynCount) {
+            maxSynCount = count;
+            targetPOS   = pos;
+        }
+    }
+    if (!targetPOS) return [];
+
+    // Lấy synonym từ POS đã chọn
+    const synonyms = posSynMap.get(targetPOS) || new Set();
 
     // Tầng 4: Final Sanitization
     const lowerToken = token.toLowerCase();
