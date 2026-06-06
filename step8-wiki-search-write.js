@@ -158,16 +158,12 @@ async function fetchSynonymsFreeDictionary(token) {
 
     if (posSynCount.size === 0) return []; // không có POS nào có synonym
 
-    // Chọn POS có nhiều synonym nhất
-    let targetPOS  = null;
-    let maxSynCount = 0;
-    for (const [pos, count] of posSynCount) {
-        if (count > maxSynCount) {
-            maxSynCount = count;
-            targetPOS   = pos;
-        }
-    }
-    if (!targetPOS) return [];
+    // Safety check: nếu token có nhiều POS → không xác định được POS trong câu
+    // → return [] để tránh thay sai (theo triết lý NKTg: đúng quan trọng hơn nhiều)
+    if (posSynCount.size > 1) return [];
+
+    // Chỉ có 1 POS duy nhất → chắc chắn đúng POS
+    const targetPOS = [...posSynCount.keys()][0];
 
     // Lấy synonym từ POS đã chọn
     const synonyms = posSynMap.get(targetPOS) || new Set();
