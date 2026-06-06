@@ -56,15 +56,29 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 }
 
 // ============================================================================
-// GLOBAL BLACKLIST — từ cổ/rác cố định, dùng Set để O(1)
+// GLOBAL BLACKLIST — 2 nhóm: từ cổ/archaic + data noise từ API
 // ============================================================================
-const GLOBAL_BLACKLIST = new Set([
+
+// Nhóm 1: Từ cổ/archaic — không dùng trong văn bản hiện đại
+const ARCHAIC_WORDS = [
     'tether', 'atween', 'prostrate', 'wayfare', 'assail',
-    'commoners', 'twelvemonth', 'foretime', 'behold',
-    'laze', 'withouten', 'perchance', 'mayhap', 'thrice',
+    'twelvemonth', 'foretime', 'behold', 'laze',
+    'withouten', 'perchance', 'mayhap', 'thrice',
     'whilom', 'betwixt', 'amongst', 'whilst', 'perforce',
     'forsooth', 'henceforth', 'thereupon', 'whereupon'
-]);
+];
+
+// Nhóm 2: Context noise — đúng POS, đúng từ điển nhưng sai ngữ cảnh thông thường
+const CONTEXT_NOISE = [
+    'pristine',   // thay "new" — quá trang trọng, sai vibe
+    'terminal',   // thay "last" — nghĩa cuối đời/chết chóc
+    'commoners',  // thay "people" — ngữ cảnh xã hội không phù hợp
+    'bergh',      // rác từ API
+    'dominator',  // thay adjective bằng noun
+    'paginate',   // thay "page" — sai ngữ cảnh
+];
+
+const GLOBAL_BLACKLIST = new Set([...ARCHAIC_WORDS, ...CONTEXT_NOISE]);
 
 // ============================================================================
 // TẦNG 1 — Local Pre-filter (chặn nhanh trước khi gọi API)
