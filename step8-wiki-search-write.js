@@ -56,105 +56,93 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
 }
 
 // ============================================================================
-// GLOBAL BLACKLIST — từ cổ/rác cố định từ Free Dictionary API
+// GLOBAL BLACKLIST — từ cổ/rác cố định, dùng Set để O(1)
 // ============================================================================
 const GLOBAL_BLACKLIST = new Set([
     'tether', 'atween', 'prostrate', 'wayfare', 'assail',
     'commoners', 'twelvemonth', 'foretime', 'behold',
-    'laze', 'largeish', 'paginate', 'wayfare', 'foretime',
-    'withouten', 'perchance', 'mayhap', 'thrice', 'whilom',
-    'betwixt', 'amongst', 'whilst', 'perforce', 'forsooth'
+    'laze', 'withouten', 'perchance', 'mayhap', 'thrice',
+    'whilom', 'betwixt', 'amongst', 'whilst', 'perforce',
+    'forsooth', 'henceforth', 'thereupon', 'whereupon'
 ]);
 
 // ============================================================================
-// BASE FORM EXCEPTIONS — từ kết thúc -er/-est nhưng là base form thật
+// TẦNG 1 — Local Pre-filter (chặn nhanh trước khi gọi API)
+// Loại token có suffix -ing/-ed/-er/-est rõ ràng
+// Exception: từ ngắn phổ biến kết thúc -er/-est là base form thật
 // ============================================================================
-const BASE_FORM_EXCEPTIONS = new Set([
+const PRE_FILTER_EXCEPTIONS = new Set([
     'her', 'over', 'under', 'after', 'butter', 'water',
     'father', 'mother', 'sister', 'brother', 'offer', 'order',
-    'other', 'rather', 'either', 'neither', 'whether',
-    'better', 'bitter', 'letter', 'matter', 'never', 'ever',
-    'river', 'liver', 'silver', 'cover', 'discover', 'hover',
-    'power', 'tower', 'flower', 'shower', 'lower', 'answer',
-    'center', 'enter', 'winter', 'summer', 'wonder', 'tender',
-    'render', 'gender', 'danger', 'cancer', 'career', 'pioneer',
-    'proper', 'super', 'per', 'paper', 'fever', 'lever'
+    'other', 'rather', 'either', 'never', 'ever', 'river',
+    'cover', 'power', 'flower', 'answer', 'center', 'enter',
+    'winter', 'wonder', 'tender', 'gender', 'cancer', 'proper',
+    'super', 'paper', 'fever', 'best', 'rest', 'test', 'west',
+    'chest', 'forest', 'harvest', 'interest', 'manifest', 'protest'
 ]);
 
-// ============================================================================
-// IRREGULAR PAST TENSE — dạng quá khứ bất quy tắc cần skip
-// ============================================================================
-const IRREGULAR_PAST_TENSE = new Set([
-    'fell', 'saw', 'went', 'came', 'got', 'made', 'took', 'did',
-    'was', 'were', 'had', 'knew', 'grew', 'flew', 'drew', 'threw',
-    'chose', 'drove', 'wrote', 'rode', 'rose', 'bore', 'wore',
-    'spoke', 'woke', 'broke', 'froze', 'stole', 'swore', 'tore',
-    'bought', 'brought', 'thought', 'sought', 'taught', 'caught',
-    'found', 'bound', 'wound', 'stood', 'understood', 'withstood',
-    'built', 'felt', 'dealt', 'meant', 'kept', 'slept', 'wept',
-    'left', 'sent', 'spent', 'lent', 'bent', 'burnt', 'learnt',
-    'told', 'sold', 'held', 'led', 'fed', 'read', 'bled', 'fled',
-    'met', 'set', 'let', 'bet', 'cut', 'put', 'shut', 'hit', 'bit',
-    'sat', 'spat', 'ran', 'won', 'lost', 'cost', 'paid', 'laid',
-    'said', 'heard', 'seen', 'been', 'given', 'taken', 'shown'
-]);
+function preFilterToken(token) {
+    const t = token.toLowerCase();
+    if (t.length < 3) return false;
+    if (PRE_FILTER_EXCEPTIONS.has(t)) return true; // exception → pass
 
-// ============================================================================
-// SUFFIX FILTER — filter synonym có suffix không phù hợp
-// ============================================================================
-const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
+    // Block dạng chia rõ ràng
+    if (t.endsWith('ing') && t.length > 4) return false;
+    if (t.endsWith('ed')  && t.length > 3) return false;
+    if (t.endsWith('er')  && t.length > 4) return false;
+    if (t.endsWith('est') && t.length > 5) return false;
 
-function filterSynonymSuffixes(syn, token) {
-    const lowerSyn   = syn.toLowerCase();
-    const lowerToken = token.toLowerCase();
-    for (const suffix of BLOCKED_SUFFIXES) {
-        if (lowerSyn.endsWith(suffix) && !lowerToken.endsWith(suffix)) {
-            return false; // synonym có suffix mà token gốc không có → loại
-        }
-    }
+    // Block plural/3rd person -s/-es rõ ràng
+    const sExceptions = new Set([
+        'this','his','was','has','as','us','bus','yes','its','plus',
+        'thus','versus','campus','focus','bonus','virus','status',
+        'census','chorus','corpus','nexus','radius','stimulus'
+    ]);
+    if (t.endsWith('s') && t.length > 3 && !sExceptions.has(t)) return false;
+
     return true;
 }
 
 // ============================================================================
 // NGUỒN 1 — Free Dictionary API
-// Tự detect POS từ API response → chỉ lấy synonym cùng POS
-// Qua GLOBAL_BLACKLIST + suffix filter + space/dash filter
+// 4 tầng: Pre-filter → API-as-Truth → POS Match → Final Sanitization
 // ============================================================================
 async function fetchSynonymsFreeDictionary(token) {
-    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
+    // Tầng 1: Local Pre-filter — chặn nhanh, không gọi API
+    if (!preFilterToken(token)) return [];
 
-    const res = await fetchWithTimeout(url, {
-        headers: { 'Accept': 'application/json' }
-    });
+    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(token.toLowerCase())}`;
+    const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
 
     if (res.status === 404) return [];
     if (!res.ok) throw new Error(`FreeDictionary HTTP ${res.status}`);
 
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return [];
+    if (!Array.isArray(data) || data.length === 0 || !data[0].word) return [];
 
-    // Detect POS: lấy meaning có nhiều definitions nhất làm POS chính
-    let targetPOS  = null;
-    let maxDefs    = 0;
+    // Tầng 2: API-as-Truth — nếu word trả về khác token → dạng chia → loại
+    if (data[0].word.toLowerCase() !== token.toLowerCase()) return [];
+
+    // Tầng 3: POS Match — tìm POS chính (meaning có nhiều definitions nhất)
+    let targetPOS = null;
+    let maxDefs   = 0;
+    const SUPPORTED_POS = new Set(['noun', 'verb', 'adjective', 'adverb']);
     for (const entry of data) {
         for (const meaning of (entry.meanings || [])) {
             const defCount = (meaning.definitions || []).length;
             if (defCount > maxDefs) {
                 maxDefs   = defCount;
-                targetPOS = meaning.partOfSpeech;
+                targetPOS = meaning.partOfSpeech?.toLowerCase();
             }
         }
     }
+    if (!targetPOS || !SUPPORTED_POS.has(targetPOS)) return [];
 
-    // POS không xác định được hoặc không hỗ trợ → return []
-    const SUPPORTED_POS = new Set(['noun', 'verb', 'adjective', 'adverb']);
-    if (!targetPOS || !SUPPORTED_POS.has(targetPOS.toLowerCase())) return [];
-
-    // Lấy synonym từ TẤT CẢ meanings cùng POS — cấp meaning.synonyms chỉ
+    // Thu thập synonym từ tất cả meanings cùng POS
     const synonyms = new Set();
     for (const entry of data) {
         for (const meaning of (entry.meanings || [])) {
-            if (meaning.partOfSpeech?.toLowerCase() !== targetPOS.toLowerCase()) continue;
+            if (meaning.partOfSpeech?.toLowerCase() !== targetPOS) continue;
             for (const syn of (meaning.synonyms || [])) {
                 if (syn && syn.toLowerCase() !== token.toLowerCase()) {
                     synonyms.add(syn.trim());
@@ -163,15 +151,19 @@ async function fetchSynonymsFreeDictionary(token) {
         }
     }
 
-    // Áp dụng bộ lọc 3 tầng
+    // Tầng 4: Final Sanitization
+    const lowerToken = token.toLowerCase();
+    const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
     return [...synonyms].filter(syn => {
         const lower = syn.toLowerCase();
-        // Tầng 1: Blacklist
+        // Blacklist
         if (GLOBAL_BLACKLIST.has(lower)) return false;
-        // Tầng 2: Cụm từ / gạch ngang
+        // Cụm từ / gạch ngang
         if (syn.includes(' ') || syn.includes('-')) return false;
-        // Tầng 3: Suffix filter
-        if (!filterSynonymSuffixes(syn, token)) return false;
+        // Suffix guard
+        for (const suffix of BLOCKED_SUFFIXES) {
+            if (lower.endsWith(suffix) && !lowerToken.endsWith(suffix)) return false;
+        }
         return true;
     }).slice(0, 10);
 }
@@ -397,47 +389,6 @@ function isProperNoun(token, sentence) {
 }
 
 // ============================================================================
-// HELPER — Kiểm tra token có ở base form không
-// Chỉ thay synonym khi token ở dạng nguyên thể (base form)
-// ============================================================================
-function isBaseForm(token) {
-    const t = token.toLowerCase();
-
-    // Quá ngắn → không xác định được
-    if (t.length < 3) return false;
-
-    // Exception list — từ kết thúc -er/-est nhưng là base form thật
-    if (BASE_FORM_EXCEPTIONS.has(t)) return true;
-
-    // Irregular past tense — dạng quá khứ bất quy tắc
-    if (IRREGULAR_PAST_TENSE.has(t)) return false;
-
-    // Dạng -ing → gerund/present participle
-    if (t.endsWith('ing') && t.length > 4) return false;
-
-    // Dạng -ed → past tense/past participle
-    if (t.endsWith('ed') && t.length > 3) return false;
-
-    // Dạng -er → comparative (faster, bigger...)
-    if (t.endsWith('er') && t.length > 4) return false;
-
-    // Dạng -est → superlative (fastest, biggest...)
-    if (t.endsWith('est') && t.length > 5) return false;
-
-    // Dạng -s/-es → plural noun hoặc 3rd person singular verb
-    const sExceptions = new Set([
-        'this','his','was','has','as','us','bus','yes','its','plus',
-        'thus','versus','campus','focus','bonus','virus','status',
-        'census','chorus','corpus','exodus','nexus','prospectus',
-        'radius','stimulus','syllabus','basis','crisis','thesis',
-        'analysis','axis','hypothesis','oasis','synopsis'
-    ]);
-    if (t.endsWith('s') && t.length > 3 && !sExceptions.has(t)) return false;
-
-    return true;
-}
-
-// ============================================================================
 // HELPER — Lọc synonyms: bỏ cụm từ (có space), bỏ từ quá hiếm/cổ
 // ============================================================================
 function filterSynonyms(synonyms, originalToken) {
@@ -474,8 +425,8 @@ async function optimizeSentence(sentence, tokenScores, lang) {
 
     // Tuần tự từng token DAMP
     for (const dampToken of dampTokens) {
-        // Skip token đã chia (past tense, gerund, plural) — tránh convert sai
-        if (!isBaseForm(dampToken)) {
+        // Tầng 1: Pre-filter token — chặn dạng chia trước khi gọi API
+        if (!preFilterToken(dampToken)) {
             Logger.log(`[Wiki Optimize] "${dampToken}" → not base form, skip`, 'info');
             continue;
         }
