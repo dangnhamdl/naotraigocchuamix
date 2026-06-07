@@ -247,14 +247,28 @@ async function loadEnDictFromHF() {
 }
 
 async function fetchSynonymsEnHuggingFace(token) {
-    // Chạy qua đúng pre-filter như FreeDictionary
+    // Chạy qua pre-filter như FreeDictionary
     if (!preFilterToken(token)) return [];
 
-    const dict = await loadEnDictFromHF();
-    const raw  = dict[token.toLowerCase().trim()] || [];
+    const dict  = await loadEnDictFromHF();
+    const key   = token.toLowerCase().trim();
+    const entry = dict[key];
+    if (!entry) return [];
+
+    // Cấu trúc mới có POS: { "adj": [...], "n": [...], "v": [...] }
+    // Giống FreeDictionary: chỉ lấy synonym khi token có đúng 1 POS
+    let raw = [];
+    if (Array.isArray(entry)) {
+        raw = entry;  // file cũ không có POS
+    } else if (typeof entry === 'object') {
+        const posKeys = Object.keys(entry).filter(k => Array.isArray(entry[k]) && entry[k].length > 0);
+        if (posKeys.length === 0) return [];
+        if (posKeys.length > 1) return [];  // multi-POS → bỏ
+        raw = entry[posKeys[0]];
+    }
     if (raw.length === 0) return [];
 
-    // Chạy qua đúng final sanitization như FreeDictionary
+    // Sanitization giống FreeDictionary
     const lowerToken       = token.toLowerCase();
     const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
     return raw.filter(syn => {
@@ -293,18 +307,33 @@ async function loadViDictFromHF() {
 }
 
 async function fetchSynonymsViHuggingFace(token) {
-    const dict = await loadViDictFromHF();
-    const key  = token.toLowerCase().trim();
-    const raw  = dict[key] || [];
+    const dict  = await loadViDictFromHF();
+    const key   = token.toLowerCase().trim();
+    const entry = dict[key];
+    if (!entry) return [];
+
+    // Cấu trúc mới: { "adj": [...], "n": [...], "v": [...], "adv": [...] }
+    // Giống tiếng Anh: chỉ lấy synonym khi token có đúng 1 POS
+    // Multi-POS → không chắc → bỏ (tránh lấy sai loại từ)
+    let raw = [];
+    if (Array.isArray(entry)) {
+        // File cũ — không có POS → dùng thẳng
+        raw = entry;
+    } else if (typeof entry === 'object') {
+        const posKeys = Object.keys(entry).filter(k => Array.isArray(entry[k]) && entry[k].length > 0);
+        if (posKeys.length === 0) return [];
+        if (posKeys.length > 1) return [];  // multi-POS → bỏ như tiếng Anh
+        raw = entry[posKeys[0]];            // đúng 1 POS → lấy synonym của POS đó
+    }
     if (raw.length === 0) return [];
 
-    // Sanitization đặc thù tiếng Việt:
-    // - Cho phép dấu cách (synonym VI là cụm từ)
-    // - Không dùng BLOCKED_SUFFIXES (VI không biến hình từ)
-    // - Lọc synonym trùng với token gốc
+    // Sanitization đặc thù tiếng Việt
+    const seen = new Set();
     return raw.filter(syn => {
         if (!syn || syn.length < 2) return false;
         if (syn.toLowerCase() === key) return false;
+        if (seen.has(syn.toLowerCase())) return false;
+        seen.add(syn.toLowerCase());
         return true;
     }).slice(0, 10);
 }
