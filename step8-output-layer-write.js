@@ -60,10 +60,12 @@ function isProperNounW(token, sentence) {
 // ============================================================================
 // HELPER — Lọc synonyms
 // ============================================================================
-function filterSynonymsW(synonyms, originalToken) {
+function filterSynonymsW(synonyms, originalToken, lang) {
     return synonyms.filter(syn => {
         if (!syn) return false;
-        if (syn.includes(' ') || syn.includes('-')) return false;
+        // Tiếng Việt: synonym có thể là cụm từ có dấu cách — không lọc
+        if (lang !== 'vi' && syn.includes(' ')) return false;
+        if (syn.includes('-')) return false;
         if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
         if (syn.length < 2) return false;
         return true;
@@ -71,16 +73,71 @@ function filterSynonymsW(synonyms, originalToken) {
 }
 
 // ============================================================================
+// HELPER VI — Ghép bigram/trigram tiếng Việt từ câu
+// Tiếng Việt: token đơn là âm tiết, cần ghép thành từ thực sự
+// Chỉ lấy cụm có TẤT CẢ âm tiết đều DAMPING trong tokenScores
+// ============================================================================
+function extractViDampPhrases(sentence, tokenScores) {
+    const syllables = sentence.match(/\p{L}+/gu) || [];
+    const dampSet   = new Set(
+        Object.entries(tokenScores)
+            .filter(([, d]) => d.state === 'DAMPING')
+            .map(([t]) => t.toLowerCase())
+    );
+
+    const phrases = new Set();
+
+    for (let i = 0; i < syllables.length; i++) {
+        // Trigram trước — ưu tiên cụm dài
+        if (i + 2 < syllables.length) {
+            const tri = syllables.slice(i, i + 3);
+            if (tri.every(s => dampSet.has(s.toLowerCase()))) {
+                const phrase = tri.join(' ');
+                if (sentence.toLowerCase().includes(phrase.toLowerCase()))
+                    phrases.add(phrase);
+            }
+        }
+        // Bigram
+        if (i + 1 < syllables.length) {
+            const bi = syllables.slice(i, i + 2);
+            if (bi.every(s => dampSet.has(s.toLowerCase()))) {
+                const phrase = bi.join(' ');
+                if (sentence.toLowerCase().includes(phrase.toLowerCase())) {
+                    const covered = [...phrases].some(p => p.toLowerCase().includes(phrase.toLowerCase()));
+                    if (!covered) phrases.add(phrase);
+                }
+            }
+        }
+    }
+
+    // Fallback: âm tiết đơn DAMPING nếu không tìm được cụm
+    if (phrases.size === 0) {
+        for (const syl of syllables) {
+            if (dampSet.has(syl.toLowerCase()) && !isProperNounW(syl, sentence))
+                phrases.add(syl);
+        }
+    }
+
+    return [...phrases];
+}
+
+// ============================================================================
 // TỐI ƯU 1 CÂU — tính toán, phân loại Expanded/Comprehensive
 // ============================================================================
 async function optimizeSentenceW(sentence, tokenScores, lang) {
-    const dampTokens = Object.entries(tokenScores)
-        .filter(([token, data]) =>
-            data.state === 'DAMPING' &&
-            sentence.toLowerCase().includes(token.toLowerCase()) &&
-            !isProperNounW(token, sentence)
-        )
-        .map(([token]) => token);
+    // ── Tiếng Việt: dùng bigram/trigram thay vì âm tiết đơn ──
+    let dampTokens;
+    if (lang === 'vi') {
+        dampTokens = extractViDampPhrases(sentence, tokenScores);
+    } else {
+        dampTokens = Object.entries(tokenScores)
+            .filter(([token, data]) =>
+                data.state === 'DAMPING' &&
+                sentence.toLowerCase().includes(token.toLowerCase()) &&
+                !isProperNounW(token, sentence)
+            )
+            .map(([token]) => token);
+    }
 
     if (dampTokens.length === 0) return null;
 
@@ -92,7 +149,7 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
 
     for (const dampToken of dampTokens) {
         const rawSynonyms = await fetchSynonyms(dampToken, lang);
-        const synonyms    = filterSynonymsW(rawSynonyms, dampToken);
+        const synonyms    = filterSynonymsW(rawSynonyms, dampToken, lang);
 
         if (synonyms.length === 0) {
             Logger.log(`[Wiki Optimize] "${dampToken}" → no synonyms after filter, skip`, 'info');
