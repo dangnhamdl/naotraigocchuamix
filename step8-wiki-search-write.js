@@ -5,14 +5,10 @@
  * Chức năng duy nhất: tìm synonym cho token
  * Export: fetchSynonyms(token, lang) → Promise<string[]>
  *
- * Fallback chain (lang = 'en'):
+ * Fallback chain:
  *   Nguồn 1: Free Dictionary API  — public, CORS OK
  *   Nguồn 2: dictionaryapi.dev + Datamuse — fallback
  *   Nguồn 3: Wiktionary MediaWiki — fallback
- *
- * Fallback chain (lang = 'vi'):
- *   Nguồn VI-1: vi.wiktionary.org — ưu tiên
- *   Nguồn VI-2: HuggingFace CDN  — fallback (thêm sau khi upload dict)
  */
 
 import { Logger } from './step1-init.js';
@@ -228,78 +224,8 @@ async function fetchSynonymsWiktionary(token) {
 }
 
 // ============================================================================
-// NGUỒN VI-1 — vi.wiktionary.org (tiếng Việt)
-// ============================================================================
-const VI_STOP_WORDS = new Set([
-    'và','hoặc','nhưng','vì','nên','để','mà','thì','là','của',
-    'trong','ngoài','trên','dưới','với','từ','đến','về','cho',
-    'không','có','được','bị','đã','đang','sẽ','vẫn','cũng','đều',
-    'này','đó','kia','đây','ở','tại','qua','theo','sau','trước',
-    'một','hai','ba','bốn','năm','nhiều','ít','mỗi','các','những',
-    'tôi','bạn','anh','chị','ông','bà','họ','chúng','mình','ta',
-    'gì','nào','ai','khi','như','vậy','thế','rất','quá','lắm',
-]);
-
-async function fetchSynonymsViWiktionary(token) {
-    const url = `https://vi.wiktionary.org/w/api.php?` +
-        `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
-    const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) throw new Error(`vi.Wiktionary HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.error) return [];
-
-    const wikitext = data?.parse?.wikitext?.['*'] || '';
-    const synonyms = new Set();
-
-    function isValidVi(word) {
-        if (!word || word.length < 2 || word.length > 40) return false;
-        if (word.toLowerCase() === token.toLowerCase()) return false;
-        if (word.includes(':') || word.includes('=')) return false;
-        if (/^\d+$/.test(word)) return false;
-        if (!/\p{L}/u.test(word)) return false;
-        return true;
-    }
-
-    function cleanVi(raw) {
-        return raw.trim()
-            .replace(/^\s*[\*#:;\|]+\s*/, '')
-            .replace(/\{\{[^}]*\}\}/g, '')
-            .replace(/[[\]{}]/g, '')
-            .replace(/\s+/g, ' ').trim();
-    }
-
-    // Tìm section ===Từ đồng nghĩa===
-    const section = (wikitext.match(
-        /={2,4}\s*Từ đồng nghĩa\s*={2,4}([\s\S]*?)(?:={2,4}[^=]|$)/i
-    ) || [])[1] || '';
-
-    if (section) {
-        // {{đồng nghĩa|từ1|từ2}} hoặc {{syn|từ1|từ2}}
-        for (const m of section.matchAll(/\{\{(?:đồng nghĩa|syn)[^}]*\|([^}]+)\}\}/gi))
-            for (const p of m[1].split('|')) { const w = cleanVi(p); if (isValidVi(w)) synonyms.add(w); }
-        // [[từ]] hoặc [[từ|text]]
-        for (const m of section.matchAll(/\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g))
-            { const w = cleanVi(m[1]); if (isValidVi(w)) synonyms.add(w); }
-        // bullet: * từ1, từ2
-        for (const line of section.split('\n')) {
-            if (!line.trim().startsWith('*')) continue;
-            const plain = line.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
-                              .replace(/\{\{[^}]+\}\}/g, '').replace(/^\s*\*+\s*/, '');
-            for (const p of plain.split(/[,;\/]/)) { const w = cleanVi(p); if (isValidVi(w)) synonyms.add(w); }
-        }
-    }
-
-    // Fallback: {{đồng nghĩa|...}} ở bất kỳ đâu
-    if (synonyms.size === 0)
-        for (const m of wikitext.matchAll(/\{\{(?:đồng nghĩa|syn)[^}]*\|([^}]+)\}\}/gi))
-            for (const p of m[1].split('|')) { const w = cleanVi(p); if (isValidVi(w)) synonyms.add(w); }
-
-    return [...synonyms].slice(0, 12);
-}
-
-// ============================================================================
-// NGUỒN EN-HF — HuggingFace dict tiếng Anh (ưu tiên trước API)
-// Cache 1 lần vào memory — 91,062 từ, 6.7MB
+// NGUỒN EN-HF — HuggingFace dict tiếng Anh
+// Cache 1 lần vào memory — 91,062 từ, 6.7MB, tra O(1)
 // ============================================================================
 const HF_EN_URL = 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main/en-synonyms.json';
 
@@ -321,16 +247,15 @@ async function loadEnDictFromHF() {
 }
 
 async function fetchSynonymsEnHuggingFace(token) {
-    // Chạy qua cùng pre-filter như FreeDictionary
+    // Chạy qua đúng pre-filter như FreeDictionary
     if (!preFilterToken(token)) return [];
 
     const dict = await loadEnDictFromHF();
-    const key  = token.toLowerCase().trim();
-    const raw  = dict[key] || [];
+    const raw  = dict[token.toLowerCase().trim()] || [];
     if (raw.length === 0) return [];
 
-    // Chạy qua cùng final sanitization như FreeDictionary
-    const lowerToken     = token.toLowerCase();
+    // Chạy qua đúng final sanitization như FreeDictionary
+    const lowerToken       = token.toLowerCase();
     const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
     return raw.filter(syn => {
         const lower = syn.toLowerCase();
@@ -356,27 +281,11 @@ const stopWords = new Set([
 ]);
 
 export async function fetchSynonyms(token, lang) {
-    if (!token || token.length < 2) return [];
-    if (/^\d+$/.test(token)) return [];
-
-    // ── TIẾNG VIỆT ──────────────────────────────────────────────────────────
-    if (lang === 'vi') {
-        if (VI_STOP_WORDS.has(token.toLowerCase())) return [];
-        try {
-            const synonyms = await fetchSynonymsViWiktionary(token);
-            Logger.log(`[Wiki-VI] vi.Wiktionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
-            return synonyms;
-        } catch (err) {
-            Logger.log(`[Wiki-VI] vi.Wiktionary blocked (${err.message}) → no VI source`, 'warn');
-        }
-        return [];
-    }
-
-    // ── TIẾNG ANH ────────────────────────────────────────────────────────────
     if (token.length < 3) return [];
+    if (/^\d+$/.test(token)) return [];
     if (stopWords.has(token.toLowerCase())) return [];
 
-    // EN-1: HuggingFace dict — ưu tiên (91,062 từ, O(1))
+    // EN-1: HuggingFace dict — ưu tiên, nhanh, O(1)
     try {
         const synonyms = await fetchSynonymsEnHuggingFace(token);
         Logger.log(`[Wiki-EN] HuggingFace: "${token}" → ${synonyms.length} synonym(s)`, 'info');
