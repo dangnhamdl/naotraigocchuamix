@@ -157,11 +157,19 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
         let bestSynonym  = null;
 
         for (const synonym of synonyms) {
-            const regex = new RegExp(
-                '\\b' + dampToken.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
-                'gi'
-            );
-            const trySentence = currentSentence.replace(regex, synonym);
+            let trySentence;
+            if (lang === 'vi') {
+                // Tiếng Việt: replace bigram chính xác — dùng khoảng trắng/đầu cuối câu
+                const escaped = dampToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp('(^|[\\s])' + escaped + '(?=[\\s,.:;!?]|$)', 'giu');
+                trySentence = currentSentence.replace(regex, (m, pre) => pre + synonym);
+            } else {
+                const regex = new RegExp(
+                    '\\b' + dampToken.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
+                    'gi'
+                );
+                trySentence = currentSentence.replace(regex, synonym);
+            }
             const tryScore    = scoreSentenceAllWiki(trySentence, tokenScores);
             if (tryScore > bestScore) {
                 bestScore    = tryScore;
@@ -198,11 +206,17 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
     // Comprehensive: tất cả synonym hợp lệ
     let comprehensiveSentence = sentence;
     for (const { original, replacement } of allReplacements) {
-        const regex = new RegExp(
-            '\\b' + original.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
-            'gi'
-        );
-        comprehensiveSentence = comprehensiveSentence.replace(regex, replacement);
+        if (lang === 'vi') {
+            const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp('(^|[\\s])' + escaped + '(?=[\\s,.:;!?]|$)', 'giu');
+            comprehensiveSentence = comprehensiveSentence.replace(regex, (m, pre) => pre + replacement);
+        } else {
+            const regex = new RegExp(
+                '\\b' + original.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
+                'gi'
+            );
+            comprehensiveSentence = comprehensiveSentence.replace(regex, replacement);
+        }
     }
 
     const comprehensiveResult = allReplacements.length > 0 ? {
