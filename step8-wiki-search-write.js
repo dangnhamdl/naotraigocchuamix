@@ -177,7 +177,7 @@ async function fetchSynonymsSource2(token) {
 // ============================================================================
 async function fetchSynonymsWiktionary(token) {
     const url = `https://en.wiktionary.org/w/api.php?` +
-        `action=parse&page=${encodeURIComponent(token.replace(/ /g, '_'))}&prop=wikitext&format=json&origin=*`;
+        `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
     const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`Wiktionary HTTP ${res.status}`);
     const data = await res.json();
@@ -242,7 +242,7 @@ const VI_STOP_WORDS = new Set([
 
 async function fetchSynonymsViWiktionary(token) {
     const url = `https://vi.wiktionary.org/w/api.php?` +
-        `action=parse&page=${encodeURIComponent(token.replace(/ /g, '_'))}&prop=wikitext&format=json&origin=*`;
+        `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
     const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`vi.Wiktionary HTTP ${res.status}`);
     const data = await res.json();
@@ -298,6 +298,35 @@ async function fetchSynonymsViWiktionary(token) {
 }
 
 // ============================================================================
+// NGUỒN VI-2 — HuggingFace CDN (fallback khi vi.wiktionary trả về 0)
+// Cache toàn bộ JSON vào memory — fetch 1 lần duy nhất ~8MB
+// ============================================================================
+const HF_VI_URL = 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main/vi-synonyms.json';
+
+let _viDictCache   = null;  // object sau khi load
+let _viDictLoading = null;  // Promise đang fetch — tránh gọi 2 lần song song
+
+async function loadViDictFromHF() {
+    if (_viDictCache) return _viDictCache;
+    if (_viDictLoading) return _viDictLoading;
+    _viDictLoading = (async () => {
+        const res = await fetchWithTimeout(HF_VI_URL, { headers: { 'Accept': 'application/json' } }, 15000);
+        if (!res.ok) throw new Error(`HuggingFace HTTP ${res.status}`);
+        _viDictCache   = await res.json();
+        _viDictLoading = null;
+        Logger.log(`[Wiki-VI] HF dict loaded — ${Object.keys(_viDictCache).length} entries`, 'info');
+        return _viDictCache;
+    })();
+    return _viDictLoading;
+}
+
+async function fetchSynonymsViHuggingFace(token) {
+    const dict = await loadViDictFromHF();
+    const key  = token.toLowerCase().trim();
+    return dict[key] || [];
+}
+
+// ============================================================================
 // FALLBACK CHAIN — public export
 // ============================================================================
 const stopWords = new Set([
@@ -315,6 +344,17 @@ export async function fetchSynonyms(token, lang) {
     // ── TIẾNG VIỆT ──────────────────────────────────────────────────────────
     if (lang === 'vi') {
         if (VI_STOP_WORDS.has(token.toLowerCase())) return [];
+
+        // VI-1: HuggingFace dict — ưu tiên (từ điển riêng, nhanh, ổn định)
+        try {
+            const synonyms = await fetchSynonymsViHuggingFace(token);
+            Logger.log(`[Wiki-VI] HuggingFace: "${token}" → ${synonyms.length} synonym(s)`, 'info');
+            if (synonyms.length > 0) return synonyms;
+        } catch (err) {
+            Logger.log(`[Wiki-VI] HuggingFace blocked (${err.message}) → fallback vi.Wiktionary`, 'warn');
+        }
+
+        // VI-2: vi.wiktionary.org — fallback khi HF bị chặn
         try {
             const synonyms = await fetchSynonymsViWiktionary(token);
             Logger.log(`[Wiki-VI] vi.Wiktionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
@@ -322,6 +362,7 @@ export async function fetchSynonyms(token, lang) {
         } catch (err) {
             Logger.log(`[Wiki-VI] vi.Wiktionary blocked (${err.message}) → no VI source`, 'warn');
         }
+
         return [];
     }
 
