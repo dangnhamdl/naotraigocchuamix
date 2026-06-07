@@ -298,30 +298,30 @@ async function fetchSynonymsViWiktionary(token) {
 }
 
 // ============================================================================
-// NGUỒN VI-2 — HuggingFace CDN (fallback khi vi.wiktionary trả về 0)
-// Cache toàn bộ JSON vào memory — fetch 1 lần duy nhất ~8MB
+// NGUỒN EN-HF — HuggingFace dict tiếng Anh (ưu tiên trước API)
+// Cache 1 lần vào memory — 91,062 từ, 6.7MB
 // ============================================================================
-const HF_VI_URL = 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main/vi-synonyms.json';
+const HF_EN_URL = 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main/en-synonyms.json';
 
-let _viDictCache   = null;  // object sau khi load
-let _viDictLoading = null;  // Promise đang fetch — tránh gọi 2 lần song song
+let _enDictCache   = null;
+let _enDictLoading = null;
 
-async function loadViDictFromHF() {
-    if (_viDictCache) return _viDictCache;
-    if (_viDictLoading) return _viDictLoading;
-    _viDictLoading = (async () => {
-        const res = await fetchWithTimeout(HF_VI_URL, { headers: { 'Accept': 'application/json' } }, 15000);
-        if (!res.ok) throw new Error(`HuggingFace HTTP ${res.status}`);
-        _viDictCache   = await res.json();
-        _viDictLoading = null;
-        Logger.log(`[Wiki-VI] HF dict loaded — ${Object.keys(_viDictCache).length} entries`, 'info');
-        return _viDictCache;
+async function loadEnDictFromHF() {
+    if (_enDictCache) return _enDictCache;
+    if (_enDictLoading) return _enDictLoading;
+    _enDictLoading = (async () => {
+        const res = await fetchWithTimeout(HF_EN_URL, { headers: { 'Accept': 'application/json' } }, 15000);
+        if (!res.ok) throw new Error(`HuggingFace EN HTTP ${res.status}`);
+        _enDictCache   = await res.json();
+        _enDictLoading = null;
+        Logger.log(`[Wiki-EN] HF dict loaded — ${Object.keys(_enDictCache).length} entries`, 'info');
+        return _enDictCache;
     })();
-    return _viDictLoading;
+    return _enDictLoading;
 }
 
-async function fetchSynonymsViHuggingFace(token) {
-    const dict = await loadViDictFromHF();
+async function fetchSynonymsEnHuggingFace(token) {
+    const dict = await loadEnDictFromHF();
     const key  = token.toLowerCase().trim();
     return dict[key] || [];
 }
@@ -344,17 +344,6 @@ export async function fetchSynonyms(token, lang) {
     // ── TIẾNG VIỆT ──────────────────────────────────────────────────────────
     if (lang === 'vi') {
         if (VI_STOP_WORDS.has(token.toLowerCase())) return [];
-
-        // VI-1: HuggingFace dict — ưu tiên (từ điển riêng, nhanh, ổn định)
-        try {
-            const synonyms = await fetchSynonymsViHuggingFace(token);
-            Logger.log(`[Wiki-VI] HuggingFace: "${token}" → ${synonyms.length} synonym(s)`, 'info');
-            if (synonyms.length > 0) return synonyms;
-        } catch (err) {
-            Logger.log(`[Wiki-VI] HuggingFace blocked (${err.message}) → fallback vi.Wiktionary`, 'warn');
-        }
-
-        // VI-2: vi.wiktionary.org — fallback khi HF bị chặn
         try {
             const synonyms = await fetchSynonymsViWiktionary(token);
             Logger.log(`[Wiki-VI] vi.Wiktionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
@@ -362,7 +351,6 @@ export async function fetchSynonyms(token, lang) {
         } catch (err) {
             Logger.log(`[Wiki-VI] vi.Wiktionary blocked (${err.message}) → no VI source`, 'warn');
         }
-
         return [];
     }
 
@@ -370,6 +358,16 @@ export async function fetchSynonyms(token, lang) {
     if (token.length < 3) return [];
     if (stopWords.has(token.toLowerCase())) return [];
 
+    // EN-1: HuggingFace dict — ưu tiên (91,062 từ, O(1))
+    try {
+        const synonyms = await fetchSynonymsEnHuggingFace(token);
+        Logger.log(`[Wiki-EN] HuggingFace: "${token}" → ${synonyms.length} synonym(s)`, 'info');
+        if (synonyms.length > 0) return synonyms;
+    } catch (err) {
+        Logger.log(`[Wiki-EN] HuggingFace blocked (${err.message}) → fallback FreeDictionary`, 'warn');
+    }
+
+    // EN-2: Free Dictionary API — fallback
     try {
         const synonyms = await fetchSynonymsFreeDictionary(token);
         Logger.log(`[Wiki] FreeDictionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
