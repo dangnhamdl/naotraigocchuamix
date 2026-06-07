@@ -63,7 +63,7 @@ function isProperNounW(token, sentence) {
 function filterSynonymsW(synonyms, originalToken, lang) {
     return synonyms.filter(syn => {
         if (!syn) return false;
-        // Tiếng Việt: synonym có thể là cụm từ có dấu cách — không lọc
+        // Tiếng Việt: synonym có thể là cụm từ có dấu cách
         if (lang !== 'vi' && syn.includes(' ')) return false;
         if (syn.includes('-')) return false;
         if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
@@ -73,9 +73,9 @@ function filterSynonymsW(synonyms, originalToken, lang) {
 }
 
 // ============================================================================
-// HELPER VI — Ghép bigram/trigram tiếng Việt từ câu
-// Tiếng Việt: token đơn là âm tiết, cần ghép thành từ thực sự
-// Chỉ lấy cụm có TẤT CẢ âm tiết đều DAMPING trong tokenScores
+// HELPER VI — Tạo danh sách cụm từ cần tra cho âm tiết DAMPING
+// Logic: mỗi âm tiết DAMPING → bigram trái + bigram phải trong câu gốc
+// Từ điển tự xử lý POS — cái nào có synonym thì dùng, không có thì bỏ
 // ============================================================================
 function extractViDampPhrases(sentence, tokenScores) {
     const syllables = sentence.match(/\p{L}+/gu) || [];
@@ -88,31 +88,29 @@ function extractViDampPhrases(sentence, tokenScores) {
     const phrases = new Set();
 
     for (let i = 0; i < syllables.length; i++) {
-        // Trigram trước — ưu tiên cụm dài
-        if (i + 2 < syllables.length) {
-            const tri = syllables.slice(i, i + 3);
-            if (tri.every(s => dampSet.has(s.toLowerCase()))) {
-                const phrase = tri.join(' ');
-                if (sentence.toLowerCase().includes(phrase.toLowerCase()))
-                    phrases.add(phrase);
-            }
+        const syl = syllables[i];
+        if (!dampSet.has(syl.toLowerCase())) continue;
+        if (isProperNounW(syl, sentence)) continue;
+
+        // Bigram trái: âm tiết trước + âm tiết này
+        if (i > 0) {
+            const phrase = syllables[i - 1] + ' ' + syl;
+            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
+                phrases.add(phrase);
         }
-        // Bigram
-        if (i + 1 < syllables.length) {
-            const bi = syllables.slice(i, i + 2);
-            if (bi.every(s => dampSet.has(s.toLowerCase()))) {
-                const phrase = bi.join(' ');
-                if (sentence.toLowerCase().includes(phrase.toLowerCase())) {
-                    const covered = [...phrases].some(p => p.toLowerCase().includes(phrase.toLowerCase()));
-                    if (!covered) phrases.add(phrase);
-                }
-            }
+
+        // Bigram phải: âm tiết này + âm tiết sau
+        if (i < syllables.length - 1) {
+            const phrase = syl + ' ' + syllables[i + 1];
+            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
+                phrases.add(phrase);
         }
     }
 
-    // Fallback: âm tiết đơn DAMPING nếu không tìm được cụm
+    // Fallback: âm tiết đơn nếu không ghép được
     if (phrases.size === 0) {
-        for (const syl of syllables) {
+        for (let i = 0; i < syllables.length; i++) {
+            const syl = syllables[i];
             if (dampSet.has(syl.toLowerCase()) && !isProperNounW(syl, sentence))
                 phrases.add(syl);
         }
@@ -125,7 +123,7 @@ function extractViDampPhrases(sentence, tokenScores) {
 // TỐI ƯU 1 CÂU — tính toán, phân loại Expanded/Comprehensive
 // ============================================================================
 async function optimizeSentenceW(sentence, tokenScores, lang) {
-    // ── Tiếng Việt: dùng bigram/trigram thay vì âm tiết đơn ──
+    // Tiếng Việt: dùng bigram trái/phải thay vì âm tiết đơn
     let dampTokens;
     if (lang === 'vi') {
         dampTokens = extractViDampPhrases(sentence, tokenScores);
