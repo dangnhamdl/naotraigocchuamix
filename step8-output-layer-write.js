@@ -60,12 +60,10 @@ function isProperNounW(token, sentence) {
 // ============================================================================
 // HELPER — Lọc synonyms
 // ============================================================================
-function filterSynonymsW(synonyms, originalToken, lang) {
+function filterSynonymsW(synonyms, originalToken) {
     return synonyms.filter(syn => {
         if (!syn) return false;
-        // Tiếng Việt: synonym có thể là cụm từ có dấu cách — không lọc space
-        if (lang !== 'vi' && syn.includes(' ')) return false;
-        if (syn.includes('-')) return false;
+        if (syn.includes(' ') || syn.includes('-')) return false;
         if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
         if (syn.length < 2) return false;
         return true;
@@ -73,66 +71,16 @@ function filterSynonymsW(synonyms, originalToken, lang) {
 }
 
 // ============================================================================
-// HELPER VI — Tạo bigram trái/phải cho âm tiết DAMPING
-// Tiếng Việt: token đơn là âm tiết — cần ghép với âm tiết liền kề trong câu
-// Từ điển tự quyết định cái nào có synonym, cái nào không
-// ============================================================================
-function extractViDampTokens(sentence, tokenScores) {
-    const syllables = sentence.match(/\p{L}+/gu) || [];
-    const dampSet   = new Set(
-        Object.entries(tokenScores)
-            .filter(([, d]) => d.state === 'DAMPING')
-            .map(([t]) => t.toLowerCase())
-    );
-
-    const phrases = new Set();
-
-    for (let i = 0; i < syllables.length; i++) {
-        const syl = syllables[i];
-        if (!dampSet.has(syl.toLowerCase())) continue;
-        if (isProperNounW(syl, sentence)) continue;
-
-        // Bigram trái: âm tiết trước + âm tiết này
-        if (i > 0) {
-            const phrase = syllables[i - 1] + ' ' + syl;
-            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
-                phrases.add(phrase);
-        }
-
-        // Bigram phải: âm tiết này + âm tiết sau
-        if (i < syllables.length - 1) {
-            const phrase = syl + ' ' + syllables[i + 1];
-            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
-                phrases.add(phrase);
-        }
-    }
-
-    // Fallback: âm tiết đơn nếu không ghép được bigram nào
-    if (phrases.size === 0) {
-        for (const syl of syllables) {
-            if (dampSet.has(syl.toLowerCase()) && !isProperNounW(syl, sentence))
-                phrases.add(syl);
-        }
-    }
-
-    return [...phrases];
-}
-
-// ============================================================================
 // TỐI ƯU 1 CÂU — tính toán, phân loại Expanded/Comprehensive
 // ============================================================================
 async function optimizeSentenceW(sentence, tokenScores, lang) {
-    // Tiếng Việt: ghép bigram trái/phải — token đơn là âm tiết, không phải từ thực
-    // Tiếng Anh: dùng token trực tiếp từ tokenScores
-    const dampTokens = lang === 'vi'
-        ? extractViDampTokens(sentence, tokenScores)
-        : Object.entries(tokenScores)
-            .filter(([token, data]) =>
-                data.state === 'DAMPING' &&
-                sentence.toLowerCase().includes(token.toLowerCase()) &&
-                !isProperNounW(token, sentence)
-            )
-            .map(([token]) => token);
+    const dampTokens = Object.entries(tokenScores)
+        .filter(([token, data]) =>
+            data.state === 'DAMPING' &&
+            sentence.toLowerCase().includes(token.toLowerCase()) &&
+            !isProperNounW(token, sentence)
+        )
+        .map(([token]) => token);
 
     if (dampTokens.length === 0) return null;
 
@@ -144,7 +92,7 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
 
     for (const dampToken of dampTokens) {
         const rawSynonyms = await fetchSynonyms(dampToken, lang);
-        const synonyms    = filterSynonymsW(rawSynonyms, dampToken, lang);
+        const synonyms    = filterSynonymsW(rawSynonyms, dampToken);
 
         if (synonyms.length === 0) {
             Logger.log(`[Wiki Optimize] "${dampToken}" → no synonyms after filter, skip`, 'info');
