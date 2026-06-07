@@ -286,15 +286,16 @@ export async function fetchSynonyms(token, lang) {
     if (stopWords.has(token.toLowerCase())) return [];
 
     // EN-1: HuggingFace dict — ưu tiên, nhanh, O(1)
+    // Chỉ fallback FreeDictionary khi HF bị chặn (exception) — không phải khi HF trả về 0
     try {
         const synonyms = await fetchSynonymsEnHuggingFace(token);
         Logger.log(`[Wiki-EN] HuggingFace: "${token}" → ${synonyms.length} synonym(s)`, 'info');
-        if (synonyms.length > 0) return synonyms;
+        return synonyms;  // trả về luôn — dù 0 hay có synonym
     } catch (err) {
         Logger.log(`[Wiki-EN] HuggingFace blocked (${err.message}) → fallback FreeDictionary`, 'warn');
     }
 
-    // EN-2: Free Dictionary API — fallback
+    // EN-2: Free Dictionary API — chỉ chạy khi HF bị chặn
     try {
         const synonyms = await fetchSynonymsFreeDictionary(token);
         Logger.log(`[Wiki] FreeDictionary: "${token}" → ${synonyms.length} synonym(s)`, 'info');
