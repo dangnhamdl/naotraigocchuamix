@@ -321,9 +321,27 @@ async function loadEnDictFromHF() {
 }
 
 async function fetchSynonymsEnHuggingFace(token) {
+    // Chạy qua cùng pre-filter như FreeDictionary
+    if (!preFilterToken(token)) return [];
+
     const dict = await loadEnDictFromHF();
     const key  = token.toLowerCase().trim();
-    return dict[key] || [];
+    const raw  = dict[key] || [];
+    if (raw.length === 0) return [];
+
+    // Chạy qua cùng final sanitization như FreeDictionary
+    const lowerToken     = token.toLowerCase();
+    const BLOCKED_SUFFIXES = ['ish', 'er', 'est', 'ed', 'ing'];
+    return raw.filter(syn => {
+        const lower = syn.toLowerCase();
+        if (GLOBAL_BLACKLIST.has(lower)) return false;
+        if (syn.includes(' ') || syn.includes('-')) return false;
+        if (lower === lowerToken) return false;
+        for (const suffix of BLOCKED_SUFFIXES) {
+            if (lower.endsWith(suffix) && !lowerToken.endsWith(suffix)) return false;
+        }
+        return true;
+    }).slice(0, 10);
 }
 
 // ============================================================================
