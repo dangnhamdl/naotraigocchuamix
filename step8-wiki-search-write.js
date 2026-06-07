@@ -349,8 +349,7 @@ async function fetchSynonymsViWiktionary(token) {
             for (const p of m[1].split('|')) { const w = cleanVi(p); if (isValidVi(w)) synonyms.add(w); }
         for (const m of section.matchAll(/\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g))
             { const w = cleanVi(m[1]); if (isValidVi(w)) synonyms.add(w); }
-        for (const line of section.split('
-')) {
+        for (const line of section.split('\n')) {
             if (!line.trim().startsWith('*')) continue;
             const plain = line.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
                               .replace(/\{\{[^}]+\}\}/g, '').replace(/^\s*\*+\s*/, '');
