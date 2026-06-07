@@ -60,12 +60,10 @@ function isProperNounW(token, sentence) {
 // ============================================================================
 // HELPER — Lọc synonyms
 // ============================================================================
-function filterSynonymsW(synonyms, originalToken, lang) {
+function filterSynonymsW(synonyms, originalToken) {
     return synonyms.filter(syn => {
         if (!syn) return false;
-        // Tiếng Việt: synonym có thể là cụm từ có dấu cách
-        if (lang !== 'vi' && syn.includes(' ')) return false;
-        if (syn.includes('-')) return false;
+        if (syn.includes(' ') || syn.includes('-')) return false;
         if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
         if (syn.length < 2) return false;
         return true;
@@ -73,86 +71,16 @@ function filterSynonymsW(synonyms, originalToken, lang) {
 }
 
 // ============================================================================
-// HELPER VI — Tạo danh sách cụm từ cần tra cho âm tiết DAMPING
-// Logic: mỗi âm tiết DAMPING → bigram trái + bigram phải trong câu gốc
-// Từ điển tự xử lý POS — cái nào có synonym thì dùng, không có thì bỏ
-// ============================================================================
-function extractViDampPhrases(sentence, tokenScores) {
-    const syllables = sentence.match(/\p{L}+/gu) || [];
-    const dampSet   = new Set(
-        Object.entries(tokenScores)
-            .filter(([, d]) => d.state === 'DAMPING')
-            .map(([t]) => t.toLowerCase())
-    );
-
-    const phrases = new Set();
-
-    for (let i = 0; i < syllables.length; i++) {
-        const syl = syllables[i];
-        if (!dampSet.has(syl.toLowerCase())) continue;
-        if (isProperNounW(syl, sentence)) continue;
-
-        // Bigram trái: âm tiết trước + âm tiết này
-        if (i > 0) {
-            const phrase = syllables[i - 1] + ' ' + syl;
-            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
-                phrases.add(phrase);
-        }
-
-        // Bigram phải: âm tiết này + âm tiết sau
-        if (i < syllables.length - 1) {
-            const phrase = syl + ' ' + syllables[i + 1];
-            if (sentence.toLowerCase().includes(phrase.toLowerCase()))
-                phrases.add(phrase);
-        }
-    }
-
-    // Fallback: âm tiết đơn nếu không ghép được
-    if (phrases.size === 0) {
-        for (let i = 0; i < syllables.length; i++) {
-            const syl = syllables[i];
-            if (dampSet.has(syl.toLowerCase()) && !isProperNounW(syl, sentence))
-                phrases.add(syl);
-        }
-    }
-
-    return [...phrases];
-}
-
-// ============================================================================
-// HELPER — Tạo regex match từ chính xác theo ngôn ngữ
-// Tiếng Anh: dùng \b (word boundary ASCII)
-// Tiếng Việt: \b không nhận dạng ký tự có dấu → dùng khoảng trắng/đầu cuối chuỗi
-// ============================================================================
-function buildTokenRegex(token, lang) {
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (lang === 'vi') {
-        // Ranh giới: đầu chuỗi/khoảng trắng/dấu câu trước và sau
-        return new RegExp(
-            '(^|[\\s.,;:!?\'\"])'  + escaped + '($|[\\s.,;:!?\'\"()])',
-            'giu'
-        );
-    }
-    return new RegExp('\\b' + escaped + '\\b', 'gi');
-}
-
-// ============================================================================
 // TỐI ƯU 1 CÂU — tính toán, phân loại Expanded/Comprehensive
 // ============================================================================
 async function optimizeSentenceW(sentence, tokenScores, lang) {
-    // Tiếng Việt: dùng bigram trái/phải thay vì âm tiết đơn
-    let dampTokens;
-    if (lang === 'vi') {
-        dampTokens = extractViDampPhrases(sentence, tokenScores);
-    } else {
-        dampTokens = Object.entries(tokenScores)
-            .filter(([token, data]) =>
-                data.state === 'DAMPING' &&
-                sentence.toLowerCase().includes(token.toLowerCase()) &&
-                !isProperNounW(token, sentence)
-            )
-            .map(([token]) => token);
-    }
+    const dampTokens = Object.entries(tokenScores)
+        .filter(([token, data]) =>
+            data.state === 'DAMPING' &&
+            sentence.toLowerCase().includes(token.toLowerCase()) &&
+            !isProperNounW(token, sentence)
+        )
+        .map(([token]) => token);
 
     if (dampTokens.length === 0) return null;
 
@@ -164,7 +92,7 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
 
     for (const dampToken of dampTokens) {
         const rawSynonyms = await fetchSynonyms(dampToken, lang);
-        const synonyms    = filterSynonymsW(rawSynonyms, dampToken, lang);
+        const synonyms    = filterSynonymsW(rawSynonyms, dampToken);
 
         if (synonyms.length === 0) {
             Logger.log(`[Wiki Optimize] "${dampToken}" → no synonyms after filter, skip`, 'info');
@@ -177,10 +105,11 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
         let bestSynonym  = null;
 
         for (const synonym of synonyms) {
-            const regex = buildTokenRegex(dampToken, lang);
-            const trySentence = lang === 'vi'
-                ? currentSentence.replace(regex, (m, pre, suf) => pre + synonym + suf)
-                : currentSentence.replace(regex, synonym);
+            const regex = new RegExp(
+                '\\b' + dampToken.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
+                'gi'
+            );
+            const trySentence = currentSentence.replace(regex, synonym);
             const tryScore    = scoreSentenceAllWiki(trySentence, tokenScores);
             if (tryScore > bestScore) {
                 bestScore    = tryScore;
@@ -217,10 +146,11 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
     // Comprehensive: tất cả synonym hợp lệ
     let comprehensiveSentence = sentence;
     for (const { original, replacement } of allReplacements) {
-        const regex = buildTokenRegex(original, lang);
-        comprehensiveSentence = lang === 'vi'
-            ? comprehensiveSentence.replace(regex, (m, pre, suf) => pre + replacement + suf)
-            : comprehensiveSentence.replace(regex, replacement);
+        const regex = new RegExp(
+            '\\b' + original.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
+            'gi'
+        );
+        comprehensiveSentence = comprehensiveSentence.replace(regex, replacement);
     }
 
     const comprehensiveResult = allReplacements.length > 0 ? {
