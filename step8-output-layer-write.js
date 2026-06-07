@@ -120,6 +120,23 @@ function extractViDampPhrases(sentence, tokenScores) {
 }
 
 // ============================================================================
+// HELPER — Tạo regex match từ chính xác theo ngôn ngữ
+// Tiếng Anh: dùng \b (word boundary ASCII)
+// Tiếng Việt: \b không nhận dạng ký tự có dấu → dùng khoảng trắng/đầu cuối chuỗi
+// ============================================================================
+function buildTokenRegex(token, lang) {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (lang === 'vi') {
+        // Ranh giới: đầu chuỗi/khoảng trắng/dấu câu trước và sau
+        return new RegExp(
+            '(^|[\\s.,;:!?\'\"])'  + escaped + '($|[\\s.,;:!?\'\"()])',
+            'giu'
+        );
+    }
+    return new RegExp('\\b' + escaped + '\\b', 'gi');
+}
+
+// ============================================================================
 // TỐI ƯU 1 CÂU — tính toán, phân loại Expanded/Comprehensive
 // ============================================================================
 async function optimizeSentenceW(sentence, tokenScores, lang) {
@@ -160,11 +177,10 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
         let bestSynonym  = null;
 
         for (const synonym of synonyms) {
-            const regex = new RegExp(
-                '\\b' + dampToken.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
-                'gi'
-            );
-            const trySentence = currentSentence.replace(regex, synonym);
+            const regex = buildTokenRegex(dampToken, lang);
+            const trySentence = lang === 'vi'
+                ? currentSentence.replace(regex, (m, pre, suf) => pre + synonym + suf)
+                : currentSentence.replace(regex, synonym);
             const tryScore    = scoreSentenceAllWiki(trySentence, tokenScores);
             if (tryScore > bestScore) {
                 bestScore    = tryScore;
@@ -201,11 +217,10 @@ async function optimizeSentenceW(sentence, tokenScores, lang) {
     // Comprehensive: tất cả synonym hợp lệ
     let comprehensiveSentence = sentence;
     for (const { original, replacement } of allReplacements) {
-        const regex = new RegExp(
-            '\\b' + original.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\b',
-            'gi'
-        );
-        comprehensiveSentence = comprehensiveSentence.replace(regex, replacement);
+        const regex = buildTokenRegex(original, lang);
+        comprehensiveSentence = lang === 'vi'
+            ? comprehensiveSentence.replace(regex, (m, pre, suf) => pre + replacement + suf)
+            : comprehensiveSentence.replace(regex, replacement);
     }
 
     const comprehensiveResult = allReplacements.length > 0 ? {

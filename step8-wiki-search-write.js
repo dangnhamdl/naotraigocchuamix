@@ -177,7 +177,7 @@ async function fetchSynonymsSource2(token) {
 // ============================================================================
 async function fetchSynonymsWiktionary(token) {
     const url = `https://en.wiktionary.org/w/api.php?` +
-        `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
+        `action=parse&page=${encodeURIComponent(token.replace(/ /g, '_'))}&prop=wikitext&format=json&origin=*`;
     const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`Wiktionary HTTP ${res.status}`);
     const data = await res.json();
@@ -242,7 +242,7 @@ const VI_STOP_WORDS = new Set([
 
 async function fetchSynonymsViWiktionary(token) {
     const url = `https://vi.wiktionary.org/w/api.php?` +
-        `action=parse&page=${encodeURIComponent(token)}&prop=wikitext&format=json&origin=*`;
+        `action=parse&page=${encodeURIComponent(token.replace(/ /g, '_'))}&prop=wikitext&format=json&origin=*`;
     const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`vi.Wiktionary HTTP ${res.status}`);
     const data = await res.json();
