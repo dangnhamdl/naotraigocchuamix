@@ -242,6 +242,16 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
+        // Ẩn/hiện sidebar và điều chỉnh padding body
+        const nav = document.querySelector('.nktg-nav-desktop');
+        if (mode === 'comprehensive') {
+            if (nav) nav.style.display = 'none';
+            document.body.style.paddingLeft = '20px';
+        } else {
+            if (nav) nav.style.display = '';
+            document.body.style.paddingLeft = '';
+        }
+
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'display:flex; align-items:stretch; height:100%;';
 
