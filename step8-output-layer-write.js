@@ -242,16 +242,13 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
-        // Comprehensive: overlay toàn viewport
+        // Comprehensive: overlay toàn viewport bằng position fixed
         const nav = document.querySelector('.nktg-nav-desktop');
-        const mainContainer = document.querySelector('.container');
         if (mode === 'comprehensive') {
             if (nav) nav.style.display = 'none';
-            if (mainContainer) mainContainer.style.visibility = 'hidden';
             document.body.style.overflow = 'hidden';
         } else {
             if (nav) nav.style.display = '';
-            if (mainContainer) mainContainer.style.visibility = '';
             document.body.style.overflow = '';
         }
 
