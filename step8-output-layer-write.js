@@ -242,18 +242,31 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
-        // Ẩn/hiện sidebar và điều chỉnh padding body
+        // Comprehensive: overlay toàn viewport
         const nav = document.querySelector('.nktg-nav-desktop');
+        const mainContainer = document.querySelector('.container');
         if (mode === 'comprehensive') {
             if (nav) nav.style.display = 'none';
-            document.body.style.paddingLeft = '20px';
+            if (mainContainer) mainContainer.style.visibility = 'hidden';
+            document.body.style.overflow = 'hidden';
         } else {
             if (nav) nav.style.display = '';
-            document.body.style.paddingLeft = '';
+            if (mainContainer) mainContainer.style.visibility = '';
+            document.body.style.overflow = '';
         }
 
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'display:flex; align-items:stretch; height:100%;';
+        if (mode === 'comprehensive') {
+            wrapper.style.cssText = `
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                display: flex;
+                z-index: 9999;
+                background: var(--color-background-primary);
+            `;
+        } else {
+            wrapper.style.cssText = 'display:flex; align-items:stretch;';
+        }
 
         const container = document.createElement('div');
         container.style.cssText = `
