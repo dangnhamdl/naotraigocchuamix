@@ -242,28 +242,29 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
-        // Comprehensive: overlay toàn viewport bằng position fixed
-        const nav = document.querySelector('.nktg-nav-desktop');
+        // Comprehensive: ẩn các phần không cần thiết, hiện lại khi thoát
+        const nav        = document.querySelector('.nktg-nav-desktop');
+        const h1         = document.querySelector('.container h1');
+        const modeWrap   = document.querySelector('.mode-selector-wrap');
+        const inputGroup = document.querySelector('.container .form-group');
+        const consoleTitle = document.querySelector('.console-title');
+        const consolePanel = document.querySelector('.console-panel');
+        const stateBadge   = document.getElementById('stateBadge');
+
+        const hideEls  = [h1, modeWrap, inputGroup, consoleTitle, consolePanel, stateBadge];
+
         if (mode === 'comprehensive') {
             if (nav) nav.style.display = 'none';
+            hideEls.forEach(el => { if (el) el.style.display = 'none'; });
             document.body.style.overflow = 'hidden';
         } else {
             if (nav) nav.style.display = '';
+            hideEls.forEach(el => { if (el) el.style.display = ''; });
             document.body.style.overflow = '';
         }
 
         const wrapper = document.createElement('div');
-        if (mode === 'comprehensive') {
-            wrapper.style.cssText = `
-                position: fixed;
-                top: 0; left: 0; right: 0; bottom: 0;
-                display: flex;
-                z-index: 9999;
-                background: var(--color-background-primary);
-            `;
-        } else {
-            wrapper.style.cssText = 'display:flex; align-items:stretch;';
-        }
+        wrapper.style.cssText = 'display:flex; align-items:stretch;';
 
         const container = document.createElement('div');
         container.style.cssText = `
