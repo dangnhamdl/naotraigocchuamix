@@ -154,10 +154,15 @@ class NKTgOutputWriteLayer {
     // extractImportantSentences — y hệt Não Trái, chỉ đổi ratio
     // ------------------------------------------------------------------
     extractImportantSentences(sentenceScores, tokenScores, globalState, ampRatio, dampRatio, stableRatio, ratio) {
+        // Comprehensive: lấy thẳng toàn bộ câu gốc, không score, không deduplicate
+        if (ratio >= 1.0) {
+            const all = Object.keys(sentenceScores);
+            Logger.log(`[Step 8W Filter] Comprehensive — toàn bộ ${all.length} câu theo thứ tự gốc`, 'info');
+            return all;
+        }
+
         const totalSentences = Object.keys(sentenceScores).length;
-        const totalKeep  = ratio >= 1.0
-            ? totalSentences
-            : Math.ceil(totalSentences * ratio);
+        const totalKeep  = Math.ceil(totalSentences * ratio);
         const ampKeep    = Math.round(totalKeep * ampRatio);
         const dampKeep   = Math.round(totalKeep * dampRatio);
         const stableKeep = Math.max(0, totalKeep - ampKeep - dampKeep);
@@ -392,7 +397,7 @@ class NKTgOutputWriteLayer {
         btnExpanded.textContent = '⊕ Expanded';
         btnExpanded.disabled = mode === 'expanded' || mode === 'comprehensive';
         btnExpanded.addEventListener('click', () => {
-            outputWriteLayer._render(output._context, 0.618, 'expanded', output.sentenceSet);
+            outputWriteLayer._render(output._context, 0.618, 'expanded');
         });
 
         const btnComprehensive = document.createElement('button');
@@ -400,7 +405,7 @@ class NKTgOutputWriteLayer {
         btnComprehensive.textContent = '◉ Comprehensive';
         btnComprehensive.disabled = mode === 'comprehensive';
         btnComprehensive.addEventListener('click', () => {
-            outputWriteLayer._render(output._context, 1.0, 'comprehensive', output.sentenceSet);
+            outputWriteLayer._render(output._context, 1.0, 'comprehensive');
         });
 
         const btnScrollUp = document.createElement('button');
@@ -424,9 +429,31 @@ class NKTgOutputWriteLayer {
     // _render — gọi chung cho mọi chế độ
     // baseSet: Set câu của Standard (38.2%) — để diff phần mới
     // ------------------------------------------------------------------
-    async _render(context, ratio, mode, baseSet = null) {
+    async _render(context, ratio, mode) {
+        const kernel         = context.kernel;
+        const sentenceScores = kernel.sentenceScores || {};
+        const tokenScores    = kernel.tokenScores    || {};
+        const ampRatio       = kernel.amplifying_ratio;
+        const dampRatio      = kernel.damping_ratio;
+        const stableRatio    = kernel.stable_ratio;
+        const state          = kernel.state;
+
+        // Comprehensive: tính expandedSet 61.8% nội bộ làm baseSet
+        let baseSet = null;
+        if (mode === 'comprehensive') {
+            const expanded = this.extractImportantSentences(
+                sentenceScores, tokenScores, state,
+                ampRatio, dampRatio, stableRatio, 0.618
+            );
+            baseSet = new Set(expanded);
+        }
+
         const output = this.generateResponse(context, ratio, baseSet);
         output._context = context;
+
+        // Gán context.output để Step 9 không lỗi
+        context.output = output;
+
         await this.renderToUI(output, mode);
         Logger.log(
             `[Step 8W Output] State: ${output.state} | Expansion: ${output.expansionRate} | Mode: ${mode}`,
@@ -527,6 +554,7 @@ export async function handleOutputLayerWrite(context) {
         // Standard — 38.2% (tham chiếu, giống Não Trái)
         await outputWriteLayer._render(context, 0.382, 'standard');
 
+        // context.output đã được gán trong _render
         await handleDistributedSync(context);
     } catch (err) {
         Logger.log(`[Step 8W Fatal] ${err.message}`, 'danger');
