@@ -315,7 +315,7 @@ class NKTgOutputWriteLayer {
 
         // Body
         const responseWrap = document.createElement('div');
-        responseWrap.style.cssText = 'padding:16px 18px; flex:1; overflow-y:auto;';
+        responseWrap.style.cssText = 'padding:16px 18px;';
         try { await ensureKaTeX(); } catch { Logger.log('[Step 8W] KaTeX load failed.', 'warn'); }
 
         // Panel gợi ý bên phải — chỉ Comprehensive
@@ -325,9 +325,10 @@ class NKTgOutputWriteLayer {
             suggestionPanel.style.cssText = `
                 flex:1; min-width:0; background:var(--color-background-primary);
                 border-left:0.5px solid var(--color-border-tertiary);
-                font-family:'Segoe UI',sans-serif; overflow:hidden;
+                font-family:'Segoe UI',sans-serif;
                 display:flex; flex-direction:column;
-                align-self:stretch;
+                position:sticky; top:0; max-height:100vh; overflow-y:auto;
+                align-self:flex-start;
             `;
             const sugHeader = document.createElement('div');
             sugHeader.style.cssText = `background:var(--color-background-secondary); padding:10px 14px; border-bottom:0.5px solid var(--color-border-tertiary); font-weight:500; color:#4A9B2F; font-size:13px; flex-shrink:0;`;
@@ -431,7 +432,7 @@ class NKTgOutputWriteLayer {
                 span.dataset.token = part.token;
                 span.style.cssText = `
                     text-decoration:underline; text-decoration-style:solid;
-                    text-decoration-color:rgba(180,180,180,0.5); text-decoration-thickness:1px;
+                    text-decoration-color:rgba(150,150,150,0.8); text-decoration-thickness:1.5px;
                     text-underline-offset:2px; cursor:pointer;
                 `;
                 span.addEventListener('click', () => {
