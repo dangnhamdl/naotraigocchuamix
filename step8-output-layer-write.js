@@ -327,9 +327,11 @@ class NKTgOutputWriteLayer {
                 border-left:0.5px solid var(--color-border-tertiary);
                 font-family:'Segoe UI',sans-serif;
                 display:flex; flex-direction:column;
-                position:sticky; top:0; max-height:100vh; overflow-y:auto;
-                align-self:flex-start;
+                position:sticky; top:0; height:100%; max-height:100vh;
+                align-self:stretch;
             `;
+            const sugBodyOuter = document.createElement('div');
+            sugBodyOuter.style.cssText = 'flex:1; overflow-y:auto;';
             const sugHeader = document.createElement('div');
             sugHeader.style.cssText = `background:var(--color-background-secondary); padding:10px 14px; border-bottom:0.5px solid var(--color-border-tertiary); font-weight:500; color:#4A9B2F; font-size:13px; flex-shrink:0;`;
             sugHeader.textContent = '💡 Gợi ý từ đồng nghĩa';
@@ -337,22 +339,29 @@ class NKTgOutputWriteLayer {
             sugBody.id = 'nktg-suggestion-body';
             sugBody.style.cssText = `padding:10px 14px; font-size:12px; color:var(--color-text-secondary); flex:1; overflow-y:auto;`;
             sugBody.textContent = 'Đang tải...';
+            sugBodyOuter.appendChild(sugBody);
             suggestionPanel.appendChild(sugHeader);
-            suggestionPanel.appendChild(sugBody);
+            suggestionPanel.appendChild(sugBodyOuter);
         }
 
-        // Render câu — thu thập tất cả dampTokens
-        const allDampTokens = new Set();
+        // Render câu — thu thập tất cả dampTokens theo thứ tự xuất hiện
+        const allDampTokens = [];
+        const seenTokens = new Set();
         for (const item of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
                 margin:0 0 10px 0; padding:10px 14px; background:#ffffff;
-                border-left:3px solid ${item.isNew ? '#f59e0b' : '#4A9B2F'};
+                border-left:3px solid #4A9B2F;
                 border-radius:0 6px 6px 0; line-height:1.7; font-size:14px;
             `;
             if (item.dampTokens && item.dampTokens.length > 0) {
                 this._renderWithUnderline(p, item.text, item.dampTokens);
-                item.dampTokens.forEach(t => allDampTokens.add(t));
+                item.dampTokens.forEach(t => {
+                    if (!seenTokens.has(t.toLowerCase())) {
+                        seenTokens.add(t.toLowerCase());
+                        allDampTokens.push(t);
+                    }
+                });
             } else {
                 renderSentence(p, item.text);
             }
