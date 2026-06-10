@@ -465,22 +465,30 @@ class NKTgOutputWriteLayer {
     // _renderWithUnderline — gạch chân từ DAMPING, hover → gợi ý
     // ------------------------------------------------------------------
     _renderWithUnderline(el, sentence, dampTokens, lang, suggestionPanel) {
-        const sorted = [...dampTokens].sort((a, b) =>
-            sentence.toLowerCase().indexOf(a.toLowerCase()) -
-            sentence.toLowerCase().indexOf(b.toLowerCase())
-        );
+        // Tìm vị trí match đúng word boundary
+        function findWordMatch(text, token) {
+            const escaped = token.replace(/[.*+?^${}()|[\]\]/g, '\\$&');
+            const regex = new RegExp('\\b' + escaped + '\\b', 'i');
+            const match = regex.exec(text);
+            return match ? { idx: match.index, len: match[0].length } : null;
+        }
+
+        // Sắp xếp theo vị trí xuất hiện trong câu
+        const sorted = [...dampTokens]
+            .map(token => { const m = findWordMatch(sentence, token); return m ? { token, idx: m.idx } : null; })
+            .filter(t => t !== null)
+            .sort((a, b) => a.idx - b.idx)
+            .map(t => t.token);
 
         let remaining = sentence;
-        let lowerRem  = remaining.toLowerCase();
         const parts   = [];
 
         for (const token of sorted) {
-            const idx = lowerRem.indexOf(token.toLowerCase());
-            if (idx === -1) continue;
-            if (idx > 0) parts.push({ type: 'text', content: remaining.slice(0, idx) });
-            parts.push({ type: 'damp', content: remaining.slice(idx, idx + token.length), token });
-            remaining = remaining.slice(idx + token.length);
-            lowerRem  = remaining.toLowerCase();
+            const m = findWordMatch(remaining, token);
+            if (!m) continue;
+            if (m.idx > 0) parts.push({ type: 'text', content: remaining.slice(0, m.idx) });
+            parts.push({ type: 'damp', content: remaining.slice(m.idx, m.idx + m.len), token });
+            remaining = remaining.slice(m.idx + m.len);
         }
         if (remaining.length > 0) parts.push({ type: 'text', content: remaining });
 
