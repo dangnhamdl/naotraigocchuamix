@@ -273,7 +273,7 @@ class NKTgOutputWriteLayer {
         }
 
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'display:flex; align-items:stretch;';
+        wrapper.style.cssText = 'display:flex; align-items:stretch; width:100%;';
 
         const container = document.createElement('div');
         container.style.cssText = `
@@ -315,7 +315,7 @@ class NKTgOutputWriteLayer {
 
         // Body
         const responseWrap = document.createElement('div');
-        responseWrap.style.cssText = 'padding:16px 18px;';
+        responseWrap.style.cssText = 'padding:16px 18px; flex:1; overflow-y:auto;';
         try { await ensureKaTeX(); } catch { Logger.log('[Step 8W] KaTeX load failed.', 'warn'); }
 
         // Panel gợi ý bên phải — chỉ Comprehensive
@@ -327,6 +327,7 @@ class NKTgOutputWriteLayer {
                 border-left:0.5px solid var(--color-border-tertiary);
                 font-family:'Segoe UI',sans-serif; overflow:hidden;
                 display:flex; flex-direction:column;
+                align-self:stretch;
             `;
             const sugHeader = document.createElement('div');
             sugHeader.style.cssText = `background:var(--color-background-secondary); padding:10px 14px; border-bottom:0.5px solid var(--color-border-tertiary); font-weight:500; color:#4A9B2F; font-size:13px; flex-shrink:0;`;
@@ -427,11 +428,24 @@ class NKTgOutputWriteLayer {
             } else {
                 const span = document.createElement('span');
                 span.textContent = part.content;
+                span.dataset.token = part.token;
                 span.style.cssText = `
-                    text-decoration:underline; text-decoration-style:dashed;
-                    text-decoration-color:#f59e0b; text-decoration-thickness:1.5px;
-                    text-underline-offset:3px;
+                    text-decoration:underline; text-decoration-style:solid;
+                    text-decoration-color:rgba(180,180,180,0.5); text-decoration-thickness:1px;
+                    text-underline-offset:2px; cursor:pointer;
                 `;
+                span.addEventListener('click', () => {
+                    const body = document.getElementById('nktg-suggestion-body');
+                    if (!body) return;
+                    const items = body.querySelectorAll('[data-token-id]');
+                    items.forEach(item => {
+                        if (item.dataset.tokenId === part.token) {
+                            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            item.style.background = 'rgba(74,155,47,0.08)';
+                            setTimeout(() => { item.style.background = ''; }, 1500);
+                        }
+                    });
+                });
                 el.appendChild(span);
             }
         }
@@ -446,7 +460,8 @@ class NKTgOutputWriteLayer {
         for (const token of dampTokens) {
             // Tạo item cho mỗi từ
             const item = document.createElement('div');
-            item.style.cssText = `padding:8px 0; border-bottom:1px solid #f3f4f6;`;
+            item.dataset.tokenId = token;
+            item.style.cssText = `padding:8px 0; border-bottom:1px solid #f3f4f6; transition:background 0.3s;`;
 
             const tokenLabel = document.createElement('div');
             tokenLabel.style.cssText = `font-weight:600; color:#1a1a1a; font-size:12px; margin-bottom:4px;`;
