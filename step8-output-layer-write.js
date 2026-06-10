@@ -242,25 +242,34 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
-        // Comprehensive: ẩn các phần không cần thiết, hiện lại khi thoát
-        const nav        = document.querySelector('.nktg-nav-desktop');
-        const h1         = document.querySelector('.container h1');
-        const modeWrap   = document.querySelector('.mode-selector-wrap');
-        const inputGroup = document.querySelector('.container .form-group');
-        const consoleTitle = document.querySelector('.console-title');
-        const consolePanel = document.querySelector('.console-panel');
-        const stateBadge   = document.getElementById('stateBadge');
-
-        const hideEls  = [h1, modeWrap, inputGroup, consoleTitle, consolePanel, stateBadge];
+        // Comprehensive: mở rộng full width giống Claude.ai
+        const nav           = document.querySelector('.nktg-nav-desktop');
+        const mainContainer = document.querySelector('.container');
 
         if (mode === 'comprehensive') {
-            if (nav) nav.style.display = 'none';
-            hideEls.forEach(el => { if (el) el.style.display = 'none'; });
-            document.body.style.overflow = 'hidden';
+            // Thu sidebar về 48px
+            if (nav) {
+                nav.style.width = '48px';
+                nav.style.overflow = 'hidden';
+                nav.querySelectorAll('.nav-item span:not(.nav-icon)').forEach(el => el.style.display = 'none');
+            }
+            document.body.style.paddingLeft = '48px';
+            if (mainContainer) {
+                mainContainer.style.maxWidth = '100%';
+                mainContainer.style.padding = '0';
+            }
         } else {
-            if (nav) nav.style.display = '';
-            hideEls.forEach(el => { if (el) el.style.display = ''; });
-            document.body.style.overflow = '';
+            // Restore sidebar
+            if (nav) {
+                nav.style.width = '';
+                nav.style.overflow = '';
+                nav.querySelectorAll('.nav-item span:not(.nav-icon)').forEach(el => el.style.display = '');
+            }
+            document.body.style.paddingLeft = '';
+            if (mainContainer) {
+                mainContainer.style.maxWidth = '';
+                mainContainer.style.padding = '';
+            }
         }
 
         const wrapper = document.createElement('div');
