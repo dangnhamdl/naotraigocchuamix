@@ -327,8 +327,7 @@ class NKTgOutputWriteLayer {
                 border-left:0.5px solid var(--color-border-tertiary);
                 font-family:'Segoe UI',sans-serif;
                 display:flex; flex-direction:column;
-                position:sticky; top:0; height:100%; max-height:100vh;
-                align-self:stretch;
+                align-self:stretch; overflow:hidden;
             `;
             const sugBodyOuter = document.createElement('div');
             sugBodyOuter.style.cssText = 'flex:1; overflow-y:auto;';
