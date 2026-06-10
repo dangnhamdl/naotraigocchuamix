@@ -243,13 +243,14 @@ class NKTgOutputWriteLayer {
         panel.innerHTML = '';
 
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'display:flex; gap:12px; align-items:flex-start;';
+        wrapper.style.cssText = 'display:flex; align-items:stretch; height:100%;';
 
         const container = document.createElement('div');
         container.style.cssText = `
-            flex:1; min-width:0; background:#ffffff;
-            border:1px solid #d1d5db; border-radius:8px;
-            overflow:hidden; font-family:'Segoe UI',sans-serif; color:#1a1a1a;
+            flex:1; min-width:0; background:var(--color-background-primary);
+            border:0.5px solid var(--color-border-tertiary); border-radius:8px;
+            overflow:hidden; font-family:'Segoe UI',sans-serif; color:var(--color-text-primary);
+            display:flex; flex-direction:column;
         `;
 
         // Header
@@ -292,17 +293,17 @@ class NKTgOutputWriteLayer {
         if (mode === 'comprehensive') {
             suggestionPanel = document.createElement('div');
             suggestionPanel.style.cssText = `
-                width:260px; flex-shrink:0; background:#ffffff;
-                border:1px solid #d1d5db; border-radius:8px;
+                flex:1; min-width:0; background:var(--color-background-primary);
+                border-left:0.5px solid var(--color-border-tertiary);
                 font-family:'Segoe UI',sans-serif; overflow:hidden;
-                align-self:flex-start; position:sticky; top:12px;
+                display:flex; flex-direction:column;
             `;
             const sugHeader = document.createElement('div');
-            sugHeader.style.cssText = `background:#f0fdf4; padding:10px 14px; border-bottom:1px solid #d1d5db; font-weight:600; color:#4A9B2F; font-size:13px;`;
+            sugHeader.style.cssText = `background:var(--color-background-secondary); padding:10px 14px; border-bottom:0.5px solid var(--color-border-tertiary); font-weight:500; color:#4A9B2F; font-size:13px; flex-shrink:0;`;
             sugHeader.textContent = '💡 Gợi ý từ đồng nghĩa';
             const sugBody = document.createElement('div');
             sugBody.id = 'nktg-suggestion-body';
-            sugBody.style.cssText = `padding:10px 14px; font-size:12px; color:#6b7280;`;
+            sugBody.style.cssText = `padding:10px 14px; font-size:12px; color:var(--color-text-secondary); flex:1; overflow-y:auto;`;
             sugBody.textContent = 'Đang tải...';
             suggestionPanel.appendChild(sugHeader);
             suggestionPanel.appendChild(sugBody);
@@ -433,7 +434,7 @@ class NKTgOutputWriteLayer {
                 synWrap.innerHTML = '';
                 if (!synonyms || synonyms.length === 0) {
                     synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
-                    synWrap.textContent = 'Không tìm thấy';
+                    synWrap.textContent = 'Bạn có thể sử dụng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
                     return;
                 }
                 for (const syn of synonyms) {
