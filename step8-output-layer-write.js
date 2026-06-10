@@ -407,8 +407,8 @@ class NKTgOutputWriteLayer {
         panel.__nktgLastResponse = output.response;
 
         // Tự động tra từ điển tất cả từ gạch chân sau khi render
-        if (mode === 'comprehensive' && allDampTokens.size > 0) {
-            this._loadAllSuggestions([...allDampTokens], output.lang, suggestionPanel);
+        if (mode === 'comprehensive' && allDampTokens.length > 0) {
+            this._loadAllSuggestions(allDampTokens, output.lang, suggestionPanel);
         }
     }
 
