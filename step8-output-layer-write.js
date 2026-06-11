@@ -462,7 +462,7 @@ class NKTgOutputWriteLayer {
     }
 
     // Tự động tra tất cả từ gạch chân → hiện bên phải như Citation panel
-    // Gọi theo batch 5 để tránh browser abort
+    // Tuần tự từng từ 1 — an toàn, không xung đột, không rate limit
     async _loadAllSuggestions(dampTokens, lang, suggestionPanel) {
         const body = suggestionPanel.querySelector('#nktg-suggestion-body');
         if (!body) return;
@@ -488,34 +488,30 @@ class NKTgOutputWriteLayer {
             itemMap[token] = synWrap;
         }
 
-        // Gọi theo batch 5
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < dampTokens.length; i += BATCH_SIZE) {
-            const batch = dampTokens.slice(i, i + BATCH_SIZE);
-            await Promise.all(batch.map(async token => {
-                const synWrap = itemMap[token];
-                if (!synWrap) return;
-                try {
-                    const synonyms = await fetchSynonyms(token, lang);
-                    synWrap.innerHTML = '';
-                    if (!synonyms || synonyms.length === 0) {
-                        synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
-                        synWrap.textContent = 'Bạn có thể sử dụng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
-                        return;
-                    }
-                    synWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:4px;';
-                    for (const syn of synonyms) {
-                        const chip = document.createElement('span');
-                        chip.textContent = syn;
-                        chip.style.cssText = `display:inline-block; padding:1px 7px; background:#f0fdf4; border:1px solid #86efac; border-radius:10px; font-size:11px; color:#166534;`;
-                        synWrap.appendChild(chip);
-                    }
-                    Logger.log(`[Step 8W] "${token}" → ${synonyms.length} synonym(s)`, 'info');
-                } catch {
+        // Tuần tự từng từ 1
+        for (const token of dampTokens) {
+            const synWrap = itemMap[token];
+            if (!synWrap) continue;
+            try {
+                const synonyms = await fetchSynonyms(token, lang);
+                synWrap.innerHTML = '';
+                if (!synonyms || synonyms.length === 0) {
                     synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
-                    synWrap.textContent = 'Lỗi tra từ điển';
+                    synWrap.textContent = 'Bạn có thể sử dụng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
+                    continue;
                 }
-            }));
+                synWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:4px;';
+                for (const syn of synonyms) {
+                    const chip = document.createElement('span');
+                    chip.textContent = syn;
+                    chip.style.cssText = `display:inline-block; padding:1px 7px; background:#f0fdf4; border:1px solid #86efac; border-radius:10px; font-size:11px; color:#166534;`;
+                    synWrap.appendChild(chip);
+                }
+                Logger.log(`[Step 8W] "${token}" → ${synonyms.length} synonym(s)`, 'info');
+            } catch {
+                synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
+                synWrap.textContent = 'Lỗi tra từ điển';
+            }
         }
     }
 

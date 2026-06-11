@@ -1,26 +1,26 @@
 /**
  * ============================================================================
- * NKTg AI SYSTEM - STEP 8: WIKI SEARCH (SYNONYM FINDER) v3.0
+ * NKTg AI SYSTEM - STEP 8: SYNONYM FINDER v4.0
  * ============================================================================
- * Chức năng duy nhất: tìm synonym cho token, đúng POS
  * Export: fetchSynonyms(token, lang) → Promise<string[]>
  *
- * Nguồn duy nhất: HuggingFace xanhnon/visynonym
- * Ngôn ngữ: en, vi, de, es, fr, ja, ru, zh
+ * Nguồn: 9 git mirror, random load balancing có trọng số
+ * Khi nguồn bị chặn → loại ra, tính lại trọng số cho nguồn còn lại
+ * Cache memory sau lần đầu load thành công
+ * Tìm tuần tự từng từ 1 — không batch
  *
- * Nguyên tắc POS:
- *   - Chỉ lấy synonym khi token có đúng 1 POS trong dict
- *   - Multi-POS → bỏ
+ * Ngôn ngữ: en, vi, de, es, fr, ja, ru, zh
+ * POS guard: chỉ lấy synonym khi token có đúng 1 POS
  */
 
 import { Logger } from './step1-init.js';
 
-const TIMEOUT_LONG = 15000;
+const TIMEOUT_MS = 15000;
 
 // ============================================================================
 // FETCH VỚI TIMEOUT
 // ============================================================================
-function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_LONG) {
+function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_MS) {
     const controller = new AbortController();
     const timeoutId  = setTimeout(() => controller.abort(), timeoutMs);
     return fetch(url, { ...options, signal: controller.signal })
@@ -28,7 +28,77 @@ function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUT_LONG) {
 }
 
 // ============================================================================
-// STOP WORDS theo ngôn ngữ
+// 9 NGUỒN — trọng số phân tải
+// ============================================================================
+const SOURCES = [
+    { name: 'HuggingFace', base: 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main/', weight: 25 },
+    { name: 'GitHub',      base: 'https://raw.githubusercontent.com/NKTgAI-Variable-Inertia/visynonym/main/', weight: 25 },
+    { name: 'GitLab',      base: 'https://gitlab.com/NKTg-Variable-Inertia/visynonym/-/raw/main/', weight: 15 },
+    { name: 'Bitbucket',   base: 'https://bitbucket.org/nktg-variable-inertia/visynonym/raw/main/', weight: 15 },
+    { name: 'Codeberg',    base: 'https://codeberg.org/NKTg-Variable-Inertia/visynonym/raw/branch/main/', weight: 10 },
+    { name: 'Gitea',       base: 'https://gitea.com/NKTg-Variable-Inertia/visynonym/raw/branch/main/', weight: 5 },
+    { name: 'Framagit',    base: 'https://framagit.org/NKTg-Variable-Inertia/visynonym/-/raw/main/', weight: 2 },
+    { name: 'Disroot',     base: 'https://git.disroot.org/NKTg-Variable-Inertia/visynonym/raw/branch/main/', weight: 2 },
+    { name: 'Srht',        base: 'https://git.sr.ht/~nktg-variable-inertia/visynonym/blob/main/', weight: 1 },
+];
+
+// Tập nguồn bị chặn trong session hiện tại
+const _blockedSources = new Set();
+
+// Chọn nguồn ngẫu nhiên theo trọng số, bỏ qua nguồn bị chặn
+function pickSource() {
+    const available = SOURCES.filter(s => !_blockedSources.has(s.name));
+    if (available.length === 0) return null;
+    const totalWeight = available.reduce((s, src) => s + src.weight, 0);
+    let rand = Math.random() * totalWeight;
+    for (const src of available) {
+        rand -= src.weight;
+        if (rand <= 0) return src;
+    }
+    return available[available.length - 1];
+}
+
+// ============================================================================
+// CACHE — dùng chung cho mọi nguồn (nội dung giống nhau)
+// ============================================================================
+const _dictCache   = {};  // lang → dict object
+const _dictLoading = {};  // lang → Promise
+
+// Load dict từ nguồn được chọn, fallback nếu bị chặn
+async function loadDict(lang) {
+    if (_dictCache[lang])   return _dictCache[lang];
+    if (_dictLoading[lang]) return _dictLoading[lang];
+
+    _dictLoading[lang] = (async () => {
+        // Thử lần lượt cho đến khi load được
+        while (true) {
+            const src = pickSource();
+            if (!src) {
+                _dictLoading[lang] = null;
+                throw new Error(`All sources blocked for lang "${lang}"`);
+            }
+
+            const url = `${src.base}${lang}-synonyms.json`;
+            try {
+                const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                _dictCache[lang]   = await res.json();
+                _dictLoading[lang] = null;
+                Logger.log(`[HF] Dict loaded via ${src.name} — lang: ${lang} | ${Object.keys(_dictCache[lang]).length} entries`, 'info');
+                return _dictCache[lang];
+            } catch (err) {
+                Logger.log(`[HF] ${src.name} blocked/error (${err.message}) → trying next source`, 'warn');
+                _blockedSources.add(src.name);
+                // Tiếp tục vòng lặp thử nguồn khác
+            }
+        }
+    })();
+
+    return _dictLoading[lang];
+}
+
+// ============================================================================
+// STOP WORDS
 // ============================================================================
 const STOP_WORDS = {
     en: new Set([
@@ -85,43 +155,8 @@ const STOP_WORDS = {
     ])
 };
 
-// ============================================================================
-// HUGGINGFACE — CACHE FACTORY
-// ============================================================================
-const HF_BASE = 'https://huggingface.co/datasets/xanhnon/visynonym/resolve/main';
-
-const HF_URLS = {
-    en: `${HF_BASE}/en-synonyms.json`,
-    vi: `${HF_BASE}/vi-synonyms.json`,
-    de: `${HF_BASE}/de-synonyms.json`,
-    es: `${HF_BASE}/es-synonyms.json`,
-    fr: `${HF_BASE}/fr-synonyms.json`,
-    ja: `${HF_BASE}/ja-synonyms.json`,
-    ru: `${HF_BASE}/ru-synonyms.json`,
-    zh: `${HF_BASE}/zh-synonyms.json`,
-};
-
-const _hfCache   = {};
-const _hfLoading = {};
-
-async function loadHFDict(lang) {
-    if (_hfCache[lang])   return _hfCache[lang];
-    if (_hfLoading[lang]) return _hfLoading[lang];
-
-    const url = HF_URLS[lang];
-    if (!url) throw new Error(`No HF URL for lang "${lang}"`);
-
-    _hfLoading[lang] = (async () => {
-        const res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) throw new Error(`HuggingFace ${lang.toUpperCase()} HTTP ${res.status}`);
-        _hfCache[lang]   = await res.json();
-        _hfLoading[lang] = null;
-        Logger.log(`[Wiki-${lang.toUpperCase()}] HF dict loaded — ${Object.keys(_hfCache[lang]).length} entries`, 'info');
-        return _hfCache[lang];
-    })();
-
-    return _hfLoading[lang];
-}
+// Danh sách ngôn ngữ hỗ trợ
+const SUPPORTED_LANGS = new Set(['en','vi','de','es','fr','ja','ru','zh']);
 
 // ============================================================================
 // SANITIZE
@@ -141,17 +176,16 @@ function sanitize(synonyms, token) {
 }
 
 // ============================================================================
-// TRA HUGGINGFACE — single-POS guard
+// TRA TỪ ĐIỂN — single-POS guard
 // ============================================================================
-async function fetchSynonymsHF(token, lang) {
-    const dict  = await loadHFDict(lang);
+async function lookupToken(token, lang) {
+    const dict  = await loadDict(lang);
     const key   = token.toLowerCase().trim();
     const entry = dict[key];
     if (!entry) return [];
 
     let raw = [];
     if (Array.isArray(entry)) {
-        // File không có POS → dùng thẳng
         raw = entry;
     } else if (typeof entry === 'object') {
         const posKeys = Object.keys(entry).filter(k => Array.isArray(entry[k]) && entry[k].length > 0);
@@ -164,7 +198,7 @@ async function fetchSynonymsHF(token, lang) {
 }
 
 // ============================================================================
-// PUBLIC EXPORT
+// PUBLIC EXPORT — tìm tuần tự từng từ 1
 // ============================================================================
 export async function fetchSynonyms(token, lang = 'en') {
     // Guard chung
@@ -172,8 +206,8 @@ export async function fetchSynonyms(token, lang = 'en') {
     if (/^\d+$/.test(token))        return [];
 
     // Ngôn ngữ không hỗ trợ
-    if (!HF_URLS[lang]) {
-        Logger.log(`[Wiki] Unsupported lang: "${lang}"`, 'warn');
+    if (!SUPPORTED_LANGS.has(lang)) {
+        Logger.log(`[HF] Unsupported lang: "${lang}"`, 'warn');
         return [];
     }
 
@@ -181,14 +215,14 @@ export async function fetchSynonyms(token, lang = 'en') {
     const stopSet = STOP_WORDS[lang] || STOP_WORDS['en'];
     if (stopSet.has(token.toLowerCase())) return [];
 
-    Logger.log(`[Wiki-${lang.toUpperCase()}] fetchSynonyms: "${token}"`, 'info');
+    Logger.log(`[HF] fetchSynonyms: "${token}" (${lang})`, 'info');
 
     try {
-        const syns = await fetchSynonymsHF(token, lang);
-        Logger.log(`[Wiki-${lang.toUpperCase()}] HuggingFace: "${token}" → ${syns.length} synonym(s)`, 'info');
+        const syns = await lookupToken(token, lang);
+        Logger.log(`[HF] "${token}" → ${syns.length} synonym(s)`, 'info');
         return syns;
     } catch (err) {
-        Logger.log(`[Wiki-${lang.toUpperCase()}] HF error: ${err.message}`, 'warn');
+        Logger.log(`[HF] "${token}" error: ${err.message}`, 'warn');
         return [];
     }
 }
