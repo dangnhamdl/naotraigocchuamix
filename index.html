@@ -407,30 +407,26 @@
             <button id="btnTraction" onclick="nktgSelectMode('traction')" style="
                 background: transparent;
                 border: 1.5px solid #d1d5db;
-                border-radius: 50px;
+                border-radius: 999px;
                 color: #6b7280;
-                font-size: 15px;
-                font-weight: 700;
-                padding: 10px 28px;
+                font-size: 14px;
+                font-weight: 600;
+                padding: 10px 36px;
                 cursor: pointer;
-                letter-spacing: 0.1em;
-                min-width: 130px;
                 transition: color 0.2s, border-color 0.2s;
             ">Extraction</button>
 
-            <canvas id="nktgGalaxy" width="173" height="133" style="border-radius:6px; flex-shrink:0;"></canvas>
+            <canvas id="nktgGalaxy" width="173" height="133" style="flex-shrink:0;"></canvas>
 
             <button id="btnAddition" onclick="nktgSelectMode('addition')" style="
                 background: transparent;
                 border: 1.5px solid #d1d5db;
-                border-radius: 50px;
+                border-radius: 999px;
                 color: #6b7280;
-                font-size: 15px;
-                font-weight: 700;
-                padding: 10px 28px;
+                font-size: 14px;
+                font-weight: 600;
+                padding: 10px 36px;
                 cursor: pointer;
-                letter-spacing: 0.1em;
-                min-width: 130px;
                 transition: color 0.2s, border-color 0.2s;
             ">Addition</button>
         </div>
@@ -442,32 +438,37 @@
         const ctx = canvas.getContext('2d');
         const W = 173, H = 133, CX = W/2, CY = H/2;
         let currentMode = null;
-
-        // ── Hình hố đen ──
         const RX=63, RY=16;
         let animAngle=0, animRaf=null;
 
-        function drawBg(){
+        function drawGalaxy() {
             ctx.clearRect(0,0,W,H);
+            // Đĩa trái cam
             const gL=ctx.createRadialGradient(CX-10,CY,1,CX,CY,RX);
-            gL.addColorStop(0,'rgba(255,220,160,0.85)');gL.addColorStop(0.15,'rgba(255,170,70,0.6)');
-            gL.addColorStop(0.45,'rgba(180,70,20,0.4)');gL.addColorStop(1,'rgba(150,60,10,0)');
-            ctx.save();ctx.beginPath();ctx.ellipse(CX,CY,RX,RY,0,Math.PI/2,Math.PI*3/2);
-            ctx.fillStyle=gL;ctx.fill();ctx.restore();
+            gL.addColorStop(0,'rgba(255,220,160,0.85)'); gL.addColorStop(0.15,'rgba(255,170,70,0.6)');
+            gL.addColorStop(0.45,'rgba(180,70,20,0.4)'); gL.addColorStop(1,'rgba(150,60,10,0)');
+            ctx.save(); ctx.beginPath(); ctx.ellipse(CX,CY,RX,RY,0,Math.PI/2,Math.PI*3/2);
+            ctx.fillStyle=gL; ctx.fill(); ctx.restore();
+            // Đĩa phải cyan
             const gR=ctx.createRadialGradient(CX+10,CY,1,CX,CY,RX);
-            gR.addColorStop(0,'rgba(180,240,250,0.85)');gR.addColorStop(0.15,'rgba(60,210,230,0.6)');
-            gR.addColorStop(0.45,'rgba(20,110,150,0.4)');gR.addColorStop(1,'rgba(10,70,100,0)');
-            ctx.save();ctx.beginPath();ctx.ellipse(CX,CY,RX,RY,0,-Math.PI/2,Math.PI/2);
-            ctx.fillStyle=gR;ctx.fill();ctx.restore();
+            gR.addColorStop(0,'rgba(180,240,250,0.85)'); gR.addColorStop(0.15,'rgba(60,210,230,0.6)');
+            gR.addColorStop(0.45,'rgba(20,110,150,0.4)'); gR.addColorStop(1,'rgba(10,70,100,0)');
+            ctx.save(); ctx.beginPath(); ctx.ellipse(CX,CY,RX,RY,0,-Math.PI/2,Math.PI/2);
+            ctx.fillStyle=gR; ctx.fill(); ctx.restore();
+            // Plasma nón trên
             const gPT=ctx.createLinearGradient(CX,CY,CX,CY-43);
-            gPT.addColorStop(0,'rgba(180,140,255,0.5)');gPT.addColorStop(0.5,'rgba(130,70,230,0.25)');gPT.addColorStop(1,'rgba(100,40,200,0.03)');
-            ctx.save();ctx.beginPath();ctx.moveTo(CX-2,CY);ctx.lineTo(CX+2,CY);ctx.lineTo(CX+11,CY-43);ctx.lineTo(CX-11,CY-43);ctx.closePath();ctx.fillStyle=gPT;ctx.fill();ctx.restore();
+            gPT.addColorStop(0,'rgba(180,140,255,0.5)'); gPT.addColorStop(0.5,'rgba(130,70,230,0.25)'); gPT.addColorStop(1,'rgba(100,40,200,0.03)');
+            ctx.save(); ctx.beginPath(); ctx.moveTo(CX-2,CY); ctx.lineTo(CX+2,CY); ctx.lineTo(CX+11,CY-43); ctx.lineTo(CX-11,CY-43); ctx.closePath(); ctx.fillStyle=gPT; ctx.fill(); ctx.restore();
+            // Plasma nón dưới
             const gPB=ctx.createLinearGradient(CX,CY,CX,CY+43);
-            gPB.addColorStop(0,'rgba(180,140,255,0.5)');gPB.addColorStop(0.5,'rgba(130,70,230,0.25)');gPB.addColorStop(1,'rgba(100,40,200,0.03)');
-            ctx.save();ctx.beginPath();ctx.moveTo(CX-2,CY);ctx.lineTo(CX+2,CY);ctx.lineTo(CX+11,CY+43);ctx.lineTo(CX-11,CY+43);ctx.closePath();ctx.fillStyle=gPB;ctx.fill();ctx.restore();
+            gPB.addColorStop(0,'rgba(180,140,255,0.5)'); gPB.addColorStop(0.5,'rgba(130,70,230,0.25)'); gPB.addColorStop(1,'rgba(100,40,200,0.03)');
+            ctx.save(); ctx.beginPath(); ctx.moveTo(CX-2,CY); ctx.lineTo(CX+2,CY); ctx.lineTo(CX+11,CY+43); ctx.lineTo(CX-11,CY+43); ctx.closePath(); ctx.fillStyle=gPB; ctx.fill(); ctx.restore();
+            // Lõi
             const gC=ctx.createRadialGradient(CX,CY,0,CX,CY,5);
-            gC.addColorStop(0,'rgba(255,255,255,1)');gC.addColorStop(0.5,'rgba(220,200,255,0.8)');gC.addColorStop(1,'rgba(160,120,255,0)');
-            ctx.beginPath();ctx.ellipse(CX,CY,5,2.5,0,0,Math.PI*2);ctx.fillStyle=gC;ctx.fill();
+            gC.addColorStop(0,'rgba(255,255,255,1)'); gC.addColorStop(0.5,'rgba(220,200,255,0.8)'); gC.addColorStop(1,'rgba(160,120,255,0)');
+            ctx.beginPath(); ctx.ellipse(CX,CY,5,2.5,0,0,Math.PI*2); ctx.fillStyle=gC; ctx.fill();
+            // Xoắn ốc theo mode
+            if(currentMode) drawSpiral(currentMode, animAngle);
         }
 
         function drawArrow(p0,p1,col){
@@ -475,32 +476,27 @@
             if(l<1)return;
             const ux=dx/l,uy=dy/l,px=-uy,py=ux;
             const mx=(p0.x+p1.x)/2,my=(p0.y+p1.y)/2;
-            ctx.save();ctx.beginPath();
-            ctx.moveTo(mx-ux*5+px*2.5,my-uy*5+py*2.5);ctx.lineTo(mx+ux*1.5,my+uy*1.5);ctx.lineTo(mx-ux*5-px*2.5,my-uy*5-py*2.5);
-            ctx.strokeStyle=col;ctx.lineWidth=0.9;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();ctx.restore();
+            ctx.save(); ctx.beginPath();
+            ctx.moveTo(mx-ux*5+px*2.5,my-uy*5+py*2.5); ctx.lineTo(mx+ux*1.5,my+uy*1.5); ctx.lineTo(mx-ux*5-px*2.5,my-uy*5-py*2.5);
+            ctx.strokeStyle=col; ctx.lineWidth=0.9; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
         }
 
-        function sptExt(f,t){ const r=3+(1-f)*52,a=-(f*Math.PI*2*1.5)+t; return{x:CX+r*Math.cos(a),y:CY+r*Math.sin(a)*0.28}; }
-        function sptAdd(f,t){ const r=3+f*52,a=-(f*Math.PI*2*1.5)-t; return{x:CX+r*Math.cos(a),y:CY+r*Math.sin(a)*0.28}; }
+        function spt(f,t){ const r=3+(1-f)*52, a=-(f*Math.PI*2*1.5)+t; return{x:CX+r*Math.cos(a),y:CY+r*Math.sin(a)*0.28}; }
+        function sptAdd(f,t){ const r=3+f*52, a=-(f*Math.PI*2*1.5)-t; return{x:CX+r*Math.cos(a),y:CY+r*Math.sin(a)*0.28}; }
 
-        function drawGalaxy() {
-            drawBg();
-            if(currentMode==='traction'){
-                const s=200,pts=[];for(let i=0;i<=s;i++)pts.push(sptExt(i/s,animAngle));
-                ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
-                for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
-                ctx.strokeStyle='rgba(190,55,15,0.65)';ctx.lineWidth=0.9;ctx.lineCap='round';
-                ctx.shadowColor='rgba(190,55,15,0.2)';ctx.shadowBlur=2;ctx.stroke();ctx.restore();
-                const i=Math.floor(s*.32);drawArrow(pts[i],pts[i+8],'rgba(190,55,15,.9)');
-            }
-            if(currentMode==='addition'){
-                const s=200,pts=[];for(let i=0;i<=s;i++)pts.push(sptAdd(i/s,animAngle));
-                ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
-                for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
-                ctx.strokeStyle='rgba(30,140,60,0.65)';ctx.lineWidth=0.9;ctx.lineCap='round';
-                ctx.shadowColor='rgba(30,140,60,0.2)';ctx.shadowBlur=2;ctx.stroke();ctx.restore();
-                const i=Math.floor(s*.55);drawArrow(pts[i],pts[i+8],'rgba(30,140,60,.9)');
-            }
+        function drawSpiral(m, t) {
+            const isExt = m === 'traction';
+            const s=200, pts=[];
+            for(let i=0;i<=s;i++) pts.push(isExt ? spt(i/s,t) : sptAdd(i/s,t));
+            ctx.save(); ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+            for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+            ctx.strokeStyle = isExt ? 'rgba(190,55,15,0.65)' : 'rgba(30,140,60,0.65)';
+            ctx.lineWidth=0.9; ctx.lineCap='round';
+            ctx.shadowColor = isExt ? 'rgba(190,55,15,0.2)' : 'rgba(30,140,60,0.2)';
+            ctx.shadowBlur=2; ctx.stroke(); ctx.restore();
+            const i = Math.floor(s*(isExt?0.32:0.55));
+            const col = isExt ? 'rgba(190,55,15,.9)' : 'rgba(30,140,60,.9)';
+            drawArrow(pts[i], pts[i+8], col);
         }
 
         function startAnim(){
@@ -515,8 +511,34 @@
         }
         function stopAnim(){
             if(animRaf){cancelAnimationFrame(animRaf);animRaf=null;}
-            animAngle=0;drawGalaxy();
+            animAngle=0; drawGalaxy();
         }
+
+        window.nktgSelectMode = function(m) {
+            if(currentMode === m) {
+                currentMode = null;
+                document.getElementById('btnTraction').style.color = '#6b7280';
+                document.getElementById('btnTraction').style.borderColor = '#d1d5db';
+                document.getElementById('btnAddition').style.color = '#6b7280';
+                document.getElementById('btnAddition').style.borderColor = '#d1d5db';
+                stopAnim(); return;
+            }
+            const w = document.getElementById('modeWarning');
+            if(w) w.style.display = 'none';
+            currentMode = m;
+            document.getElementById('btnTraction').style.color = '#6b7280';
+            document.getElementById('btnTraction').style.borderColor = '#d1d5db';
+            document.getElementById('btnAddition').style.color = '#6b7280';
+            document.getElementById('btnAddition').style.borderColor = '#d1d5db';
+            if(m === 'traction') {
+                document.getElementById('btnTraction').style.color = '#E2533A';
+                document.getElementById('btnTraction').style.borderColor = '#E2533A';
+            } else {
+                document.getElementById('btnAddition').style.color = '#4A9B2F';
+                document.getElementById('btnAddition').style.borderColor = '#4A9B2F';
+            }
+            startAnim();
+        };
 
         window.nktgGetMode = function() { return currentMode; };
         drawGalaxy();
@@ -664,8 +686,9 @@
         const origSelectMode = window.nktgSelectMode;
         window.nktgSelectMode = function(m) {
             origSelectMode(m);
-            if(window.nktgGetMode()) startAnim(); else stopAnim();
+            updateArrow();
         };
+        updateArrow();
     })();
     </script>
 
