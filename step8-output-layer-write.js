@@ -350,9 +350,9 @@ class NKTgOutputWriteLayer {
         for (const item of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
-                margin:0 0 10px 0; padding:10px 14px; background:#ffffff;
-                border-left:3px solid #4A9B2F;
-                border-radius:0 6px 6px 0; line-height:1.7; font-size:14px;
+                margin:0 0 8px 0; padding:4px 0;
+                line-height:1.7; font-size:14px;
+                color:var(--color-text-primary);
             `;
             if (item.dampTokens && item.dampTokens.length > 0) {
                 this._renderWithUnderline(p, item.text, item.dampTokens);
