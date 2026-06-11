@@ -24,6 +24,17 @@ const KATEX_JS  = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js'
 const KATEX_CSS = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
 let katexLoaded = false;
 
+// ============================================================================
+// MOBILE DETECTION & SYNONYM CACHE
+// ============================================================================
+function isMobile() {
+    return window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+}
+
+// Cache synonym per render session — { [tokenLower]: string[] }
+// Reset mỗi lần render Comprehensive mới
+let _synonymCache = {};
+
 async function ensureKaTeX() {
     if (katexLoaded) return;
     if (!document.querySelector(`link[href="${KATEX_CSS}"]`)) {
@@ -237,6 +248,142 @@ class NKTgOutputWriteLayer {
         };
     }
 
+    // ============================================================================
+    // MOBILE POPOVER — giống dictionary lookup Apple Books / Kindle / Google Translate
+    // ============================================================================
+
+    _showPopover(spanEl, token) {
+        this._hidePopover();
+
+        const synonyms = _synonymCache[token.toLowerCase()];
+        if (synonyms === undefined) return; // chưa load xong, bỏ qua
+
+        // Highlight từ đang chọn
+        spanEl.dataset.popoverActive = '1';
+        spanEl.style.background = 'rgba(74,155,47,0.15)';
+        spanEl.style.borderRadius = '3px';
+        spanEl.style.textDecoration = 'none';
+        spanEl.style.outline = '1.5px solid #4A9B2F';
+
+        // Tạo popover
+        const pop = document.createElement('div');
+        pop.id = 'nktg-popover';
+        pop.style.cssText = `
+            position:absolute; z-index:9999;
+            background:#fff; border:1px solid #e5e7eb;
+            border-radius:10px; padding:10px 12px;
+            box-shadow:0 8px 24px rgba(0,0,0,0.13);
+            min-width:160px; max-width:260px;
+            font-family:'Segoe UI',sans-serif;
+        `;
+
+        // Tên từ
+        const label = document.createElement('div');
+        label.style.cssText = 'font-weight:700; font-size:13px; color:#1a1a1a; margin-bottom:7px;';
+        label.textContent = `"${token}"`;
+        pop.appendChild(label);
+
+        // Nội dung synonym
+        if (!synonyms || synonyms.length === 0) {
+            const msg = document.createElement('div');
+            msg.style.cssText = 'font-size:11px; color:#9ca3af; line-height:1.5;';
+            msg.textContent = 'Bạn có thể dùng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
+            pop.appendChild(msg);
+        } else {
+            const chips = document.createElement('div');
+            chips.style.cssText = 'display:flex; flex-wrap:wrap; gap:5px;';
+            for (const syn of synonyms) {
+                const chip = document.createElement('span');
+                chip.textContent = syn;
+                chip.style.cssText = `
+                    display:inline-block; padding:2px 9px;
+                    background:#f0fdf4; border:1px solid #86efac;
+                    border-radius:10px; font-size:12px; color:#166534;
+                `;
+                chips.appendChild(chip);
+            }
+            pop.appendChild(chips);
+        }
+
+        // Mũi tên nhỏ
+        const arrow = document.createElement('div');
+        arrow.style.cssText = `
+            position:absolute; width:10px; height:10px;
+            background:#fff; border:1px solid #e5e7eb;
+            transform:rotate(45deg);
+        `;
+        pop.appendChild(arrow);
+
+        document.body.appendChild(pop);
+
+        // Tính vị trí — phía trên từ, flip xuống dưới nếu không đủ chỗ
+        const rect = spanEl.getBoundingClientRect();
+        const scrollY = window.scrollY || document.documentElement.scrollTop;
+        const scrollX = window.scrollX || document.documentElement.scrollLeft;
+        const popW = 260;
+        const popH = pop.offsetHeight || 80;
+
+        let top, left, arrowTop, arrowBottom, flipDown;
+
+        // Thử hiện phía trên
+        if (rect.top - popH - 12 >= 8) {
+            flipDown = false;
+            top = scrollY + rect.top - popH - 12;
+            arrow.style.bottom = '-6px';
+            arrow.style.top = '';
+            arrow.style.borderTop = 'none';
+            arrow.style.borderLeft = 'none';
+        } else {
+            flipDown = true;
+            top = scrollY + rect.bottom + 12;
+            arrow.style.top = '-6px';
+            arrow.style.bottom = '';
+            arrow.style.borderBottom = 'none';
+            arrow.style.borderRight = 'none';
+        }
+
+        // Căn ngang theo giữa từ, clamp vào viewport
+        left = scrollX + rect.left + rect.width / 2 - popW / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
+
+        // Vị trí mũi tên ngang
+        const arrowLeft = (scrollX + rect.left + rect.width / 2) - left - 5;
+        arrow.style.left = `${Math.max(10, Math.min(arrowLeft, popW - 20))}px`;
+
+        pop.style.top  = `${top}px`;
+        pop.style.left = `${left}px`;
+        pop.style.width = `${popW}px`;
+
+        // Đóng khi tap ngoài
+        const onOutside = (e) => {
+            if (!pop.contains(e.target) && e.target !== spanEl) {
+                this._hidePopover();
+                document.removeEventListener('touchstart', onOutside, true);
+                document.removeEventListener('mousedown',  onOutside, true);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('touchstart', onOutside, true);
+            document.addEventListener('mousedown',  onOutside, true);
+        }, 0);
+    }
+
+    _hidePopover() {
+        const existing = document.getElementById('nktg-popover');
+        if (existing) existing.remove();
+        // Xoá highlight tất cả từ
+        document.querySelectorAll('[data-popover-active="1"]').forEach(el => {
+            el.removeAttribute('data-popover-active');
+            el.style.background = '';
+            el.style.borderRadius = '';
+            el.style.outline = '';
+            el.style.textDecoration = 'underline';
+            el.style.textDecorationStyle = 'solid';
+            el.style.textDecorationColor = 'rgba(150,150,150,0.8)';
+            el.style.textDecorationThickness = '1.5px';
+        });
+    }
+
     async renderToUI(output, mode = 'standard') {
         const panel = document.getElementById('outputPanel');
         if (!panel) return;
@@ -318,9 +465,9 @@ class NKTgOutputWriteLayer {
         responseWrap.style.cssText = 'padding:16px 18px;';
         try { await ensureKaTeX(); } catch { Logger.log('[Step 8W] KaTeX load failed.', 'warn'); }
 
-        // Panel gợi ý bên phải — chỉ Comprehensive
+        // Panel gợi ý bên phải — chỉ Comprehensive + chỉ desktop
         let suggestionPanel = null;
-        if (mode === 'comprehensive') {
+        if (mode === 'comprehensive' && !isMobile()) {
             suggestionPanel = document.createElement('div');
             suggestionPanel.style.cssText = `
                 flex:1; min-width:0; background:var(--color-background-primary);
@@ -409,7 +556,14 @@ class NKTgOutputWriteLayer {
 
         // Tự động tra từ điển tất cả từ gạch chân sau khi render
         if (mode === 'comprehensive' && allDampTokens.length > 0) {
-            this._loadAllSuggestions(allDampTokens, output.lang, suggestionPanel);
+            _synonymCache = {}; // reset cache cho render mới
+            if (isMobile()) {
+                // Mobile: preload vào cache → Popover dùng
+                this._preloadSynonymsToCache(allDampTokens, output.lang);
+            } else {
+                // Desktop: render vào panel phải như cũ
+                this._loadAllSuggestions(allDampTokens, output.lang, suggestionPanel);
+            }
         }
     }
 
@@ -445,17 +599,24 @@ class NKTgOutputWriteLayer {
                     text-decoration-color:rgba(150,150,150,0.8); text-decoration-thickness:1.5px;
                     text-underline-offset:2px; cursor:pointer;
                 `;
-                span.addEventListener('click', () => {
-                    const body = document.getElementById('nktg-suggestion-body');
-                    if (!body) return;
-                    const items = body.querySelectorAll('[data-token-id]');
-                    items.forEach(item => {
-                        if (item.dataset.tokenId === part.token) {
-                            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                            item.style.background = 'rgba(74,155,47,0.08)';
-                            setTimeout(() => { item.style.background = ''; }, 1500);
-                        }
-                    });
+                span.addEventListener('click', (e) => {
+                    if (isMobile()) {
+                        // Mobile: hiện Popover tại chỗ — giống dictionary lookup
+                        e.stopPropagation();
+                        this._showPopover(span, part.token);
+                    } else {
+                        // Desktop: scroll panel phải đến gợi ý tương ứng
+                        const body = document.getElementById('nktg-suggestion-body');
+                        if (!body) return;
+                        const items = body.querySelectorAll('[data-token-id]');
+                        items.forEach(item => {
+                            if (item.dataset.tokenId === part.token) {
+                                item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                item.style.background = 'rgba(74,155,47,0.08)';
+                                setTimeout(() => { item.style.background = ''; }, 1500);
+                            }
+                        });
+                    }
                 });
                 el.appendChild(span);
             }
@@ -495,6 +656,8 @@ class NKTgOutputWriteLayer {
             if (!synWrap) continue;
             try {
                 const synonyms = await fetchSynonyms(token, lang);
+                // Ghi vào cache (dùng chung cho Popover mobile nếu cần)
+                _synonymCache[token.toLowerCase()] = synonyms || [];
                 synWrap.innerHTML = '';
                 if (!synonyms || synonyms.length === 0) {
                     synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
@@ -510,8 +673,23 @@ class NKTgOutputWriteLayer {
                 }
                 Logger.log(`[Step 8W] "${token}" → ${synonyms.length} synonym(s)`, 'info');
             } catch {
+                _synonymCache[token.toLowerCase()] = [];
                 synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
                 synWrap.textContent = 'Lỗi tra từ điển';
+            }
+        }
+    }
+
+    // Mobile: preload synonym vào cache ngầm — Popover dùng khi tap
+    // Tuần tự từng từ 1, giống desktop nhưng không render DOM panel
+    async _preloadSynonymsToCache(dampTokens, lang) {
+        for (const token of dampTokens) {
+            try {
+                const synonyms = await fetchSynonyms(token, lang);
+                _synonymCache[token.toLowerCase()] = synonyms || [];
+                Logger.log(`[Step 8W Mobile Cache] "${token}" → ${(synonyms || []).length} synonym(s)`, 'info');
+            } catch {
+                _synonymCache[token.toLowerCase()] = [];
             }
         }
     }
