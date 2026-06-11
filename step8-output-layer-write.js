@@ -42,6 +42,37 @@ function _popoverWidth() {
 // Reset mỗi lần render Comprehensive mới
 let _synonymCache = {};
 
+// ============================================================================
+// FALLBACK TEXT — đa ngôn ngữ (21 ngôn ngữ theo step2-geo-routing.js)
+// ============================================================================
+const FALLBACK_TEXT = {
+    vi: 'Bạn có thể dùng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.',
+    en: 'You may use your own vocabulary to consider optimizing the text.',
+    zh: '您可以使用自己的词汇来考虑优化文本。',
+    ja: '自分の語彙を使ってテキストを最適化することを検討してください。',
+    ko: '자신의 어휘를 사용하여 텍스트를 최적화하는 것을 고려해 보세요.',
+    fr: 'Vous pouvez utiliser votre propre vocabulaire pour envisager d\'optimiser le texte.',
+    de: 'Sie können Ihren eigenen Wortschatz nutzen, um den Text zu optimieren.',
+    es: 'Puedes usar tu propio vocabulario para considerar optimizar el texto.',
+    pt: 'Você pode usar seu próprio vocabulário para considerar otimizar o texto.',
+    it: 'Puoi usare il tuo vocabolario per considerare di ottimizzare il testo.',
+    ru: 'Вы можете использовать свой словарный запас для оптимизации текста.',
+    ar: 'يمكنك استخدام مفرداتك الخاصة للنظر في تحسين النص.',
+    fa: 'می‌توانید از واژگان خود برای بهینه‌سازی متن استفاده کنید.',
+    hi: 'आप पाठ को अनुकूलित करने के लिए अपनी शब्दावली का उपयोग कर सकते हैं।',
+    he: 'תוכל להשתמש במילים שלך כדי לשקול לייעל את הטקסט.',
+    pl: 'Możesz użyć własnego słownictwa, aby rozważyć optymalizację tekstu.',
+    nl: 'Je kunt je eigen woordenschat gebruiken om de tekst te optimaliseren.',
+    tr: 'Metni optimize etmek için kendi kelime dağarcığınızı kullanabilirsiniz.',
+    sv: 'Du kan använda ditt eget ordförråd för att överväga att optimera texten.',
+    el: 'Μπορείτε να χρησιμοποιήσετε το δικό σας λεξιλόγιο για να βελτιστοποιήσετε το κείμενο.',
+    uk: 'Ви можете використовувати свій словниковий запас для оптимізації тексту.',
+};
+
+function getFallbackText(lang) {
+    return FALLBACK_TEXT[lang] || FALLBACK_TEXT['en'];
+}
+
 async function ensureKaTeX() {
     if (katexLoaded) return;
     if (!document.querySelector(`link[href="${KATEX_CSS}"]`)) {
@@ -259,7 +290,7 @@ class NKTgOutputWriteLayer {
     // MOBILE POPOVER — giống dictionary lookup Apple Books / Kindle / Google Translate
     // ============================================================================
 
-    _showPopover(spanEl, token) {
+    _showPopover(spanEl, token, lang) {
         this._hidePopover();
 
         const synonyms = _synonymCache[token.toLowerCase()];
@@ -294,7 +325,7 @@ class NKTgOutputWriteLayer {
         if (!synonyms || synonyms.length === 0) {
             const msg = document.createElement('div');
             msg.style.cssText = 'font-size:11px; color:#9ca3af; line-height:1.5;';
-            msg.textContent = 'Bạn có thể dùng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
+            msg.textContent = getFallbackText(lang);
             pop.appendChild(msg);
         } else {
             const chips = document.createElement('div');
@@ -396,36 +427,6 @@ class NKTgOutputWriteLayer {
         if (!panel) return;
         panel.innerHTML = '';
 
-        // Comprehensive: mở rộng full width giống Claude.ai
-        const nav           = document.querySelector('.nktg-nav-desktop');
-        const mainContainer = document.querySelector('.container');
-
-        if (mode === 'comprehensive') {
-            // Thu sidebar về 48px
-            if (nav) {
-                nav.style.width = '48px';
-                nav.style.overflow = 'hidden';
-                nav.querySelectorAll('.nav-item span:not(.nav-icon)').forEach(el => el.style.display = 'none');
-            }
-            document.body.style.paddingLeft = '48px';
-            if (mainContainer) {
-                mainContainer.style.maxWidth = '100%';
-                mainContainer.style.padding = '0';
-            }
-        } else {
-            // Restore sidebar
-            if (nav) {
-                nav.style.width = '';
-                nav.style.overflow = '';
-                nav.querySelectorAll('.nav-item span:not(.nav-icon)').forEach(el => el.style.display = '');
-            }
-            document.body.style.paddingLeft = '';
-            if (mainContainer) {
-                mainContainer.style.maxWidth = '';
-                mainContainer.style.padding = '';
-            }
-        }
-
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'display:flex; align-items:stretch; width:100%;';
 
@@ -488,7 +489,7 @@ class NKTgOutputWriteLayer {
                 color:var(--color-text-primary);
             `;
             if (item.dampTokens && item.dampTokens.length > 0) {
-                this._renderWithUnderline(p, item.text, item.dampTokens);
+                this._renderWithUnderline(p, item.text, item.dampTokens, output.lang);
                 item.dampTokens.forEach(t => {
                     if (!seenTokens.has(t.toLowerCase())) {
                         seenTokens.add(t.toLowerCase());
@@ -548,7 +549,7 @@ class NKTgOutputWriteLayer {
     }
 
     // Render câu với gạch chân từ DAMPING — dùng word boundary
-    _renderWithUnderline(el, sentence, dampTokens) {
+    _renderWithUnderline(el, sentence, dampTokens, lang) {
         const sorted = [...dampTokens]
             .map(token => { const m = findWordMatch(sentence, token); return m ? { token, idx: m.idx } : null; })
             .filter(t => t !== null)
@@ -581,7 +582,7 @@ class NKTgOutputWriteLayer {
                 `;
                 span.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this._showPopover(span, part.token);
+                    this._showPopover(span, part.token, lang);
                 });
                 el.appendChild(span);
             }
@@ -626,7 +627,7 @@ class NKTgOutputWriteLayer {
                 synWrap.innerHTML = '';
                 if (!synonyms || synonyms.length === 0) {
                     synWrap.style.cssText = 'color:#9ca3af; font-size:11px;';
-                    synWrap.textContent = 'Bạn có thể sử dụng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.';
+                    synWrap.textContent = getFallbackText(lang);
                     continue;
                 }
                 synWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:4px;';
