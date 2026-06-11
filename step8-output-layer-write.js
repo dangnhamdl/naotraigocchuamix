@@ -13,8 +13,11 @@
  * Comprehensive:
  *   - 100% câu giữ thứ tự gốc
  *   - Phần câu mới (ngoài 61.8%) → gạch chân từ DAMPING
- *   - Panel bên phải: tự động tra HF và hiện tất cả gợi ý synonym ngay sau render
- *   - KHÔNG thay vào văn bản
+ *   - Mọi thiết bị: click/tap từ gạch chân → Popover hiện tại chỗ (giống Grammarly / dictionary lookup)
+ *   - Desktop: Popover rộng 300px, flip up/down tự động
+ *   - Mobile: Popover rộng 260px, flip up/down tự động
+ *   - Preload synonym ngầm sau render, Popover hiện ngay lập tức từ cache
+ *   - KHÔNG thay vào văn bản, KHÔNG có panel bên phải
  */
 import { setPipelineState, unlockPipelineUI, Logger } from './step1-init.js';
 import { handleDistributedSync } from './step9-distributed-sync.js';
@@ -29,6 +32,10 @@ let katexLoaded = false;
 // ============================================================================
 function isMobile() {
     return window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+}
+
+function _popoverWidth() {
+    return isMobile() ? 260 : 300;
 }
 
 // Cache synonym per render session — { [tokenLower]: string[] }
@@ -320,7 +327,7 @@ class NKTgOutputWriteLayer {
         const rect = spanEl.getBoundingClientRect();
         const scrollY = window.scrollY || document.documentElement.scrollTop;
         const scrollX = window.scrollX || document.documentElement.scrollLeft;
-        const popW = 260;
+        const popW = _popoverWidth();
         const popH = pop.offsetHeight || 80;
 
         let top, left, arrowTop, arrowBottom, flipDown;
@@ -465,31 +472,9 @@ class NKTgOutputWriteLayer {
         responseWrap.style.cssText = 'padding:16px 18px;';
         try { await ensureKaTeX(); } catch { Logger.log('[Step 8W] KaTeX load failed.', 'warn'); }
 
-        // Panel gợi ý bên phải — chỉ Comprehensive + chỉ desktop
+        // Panel gợi ý bên phải — ĐÃ BỎ trên mọi thiết bị
+        // Mọi thiết bị dùng Popover tại chỗ (xem _showPopover)
         let suggestionPanel = null;
-        if (mode === 'comprehensive' && !isMobile()) {
-            suggestionPanel = document.createElement('div');
-            suggestionPanel.style.cssText = `
-                flex:1; min-width:0; background:var(--color-background-primary);
-                border-left:0.5px solid var(--color-border-tertiary);
-                font-family:'Segoe UI',sans-serif;
-                display:flex; flex-direction:column;
-                position:sticky; top:0; height:100%; max-height:100vh;
-                align-self:stretch;
-            `;
-            const sugBodyOuter = document.createElement('div');
-            sugBodyOuter.style.cssText = 'flex:1; overflow-y:auto;';
-            const sugHeader = document.createElement('div');
-            sugHeader.style.cssText = `background:var(--color-background-secondary); padding:10px 14px; border-bottom:0.5px solid var(--color-border-tertiary); font-weight:500; color:#4A9B2F; font-size:13px; flex-shrink:0;`;
-            sugHeader.textContent = '💡 Gợi ý từ đồng nghĩa';
-            const sugBody = document.createElement('div');
-            sugBody.id = 'nktg-suggestion-body';
-            sugBody.style.cssText = `padding:10px 14px; font-size:12px; color:var(--color-text-secondary); flex:1; overflow-y:auto;`;
-            sugBody.textContent = 'Đang tải...';
-            sugBodyOuter.appendChild(sugBody);
-            suggestionPanel.appendChild(sugHeader);
-            suggestionPanel.appendChild(sugBodyOuter);
-        }
 
         // Render câu — thu thập tất cả dampTokens theo thứ tự xuất hiện
         const allDampTokens = [];
@@ -555,15 +540,10 @@ class NKTgOutputWriteLayer {
         panel.__nktgLastResponse = output.response;
 
         // Tự động tra từ điển tất cả từ gạch chân sau khi render
+        // Mọi thiết bị: preload vào cache → Popover dùng khi click/tap
         if (mode === 'comprehensive' && allDampTokens.length > 0) {
             _synonymCache = {}; // reset cache cho render mới
-            if (isMobile()) {
-                // Mobile: preload vào cache → Popover dùng
-                this._preloadSynonymsToCache(allDampTokens, output.lang);
-            } else {
-                // Desktop: render vào panel phải như cũ
-                this._loadAllSuggestions(allDampTokens, output.lang, suggestionPanel);
-            }
+            this._preloadSynonymsToCache(allDampTokens, output.lang);
         }
     }
 
@@ -600,23 +580,8 @@ class NKTgOutputWriteLayer {
                     text-underline-offset:2px; cursor:pointer;
                 `;
                 span.addEventListener('click', (e) => {
-                    if (isMobile()) {
-                        // Mobile: hiện Popover tại chỗ — giống dictionary lookup
-                        e.stopPropagation();
-                        this._showPopover(span, part.token);
-                    } else {
-                        // Desktop: scroll panel phải đến gợi ý tương ứng
-                        const body = document.getElementById('nktg-suggestion-body');
-                        if (!body) return;
-                        const items = body.querySelectorAll('[data-token-id]');
-                        items.forEach(item => {
-                            if (item.dataset.tokenId === part.token) {
-                                item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                                item.style.background = 'rgba(74,155,47,0.08)';
-                                setTimeout(() => { item.style.background = ''; }, 1500);
-                            }
-                        });
-                    }
+                    e.stopPropagation();
+                    this._showPopover(span, part.token);
                 });
                 el.appendChild(span);
             }
