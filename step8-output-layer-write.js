@@ -350,7 +350,8 @@ class NKTgOutputWriteLayer {
         for (const item of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
-                margin:0 0 8px 0; padding:4px 0;
+                margin:0 0 8px 0; padding:6px 14px;
+                border-left:3px solid #4A9B2F;
                 line-height:1.7; font-size:14px;
                 color:var(--color-text-primary);
             `;
