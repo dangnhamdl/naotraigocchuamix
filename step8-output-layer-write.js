@@ -696,7 +696,7 @@ class NKTgOutputWriteLayer {
 
             if (displayToken === token) return; // token đơn có synonym, không cần patch
 
-            // zh/ja: bigram không có khoảng trắng — tìm trong text node liền kề
+            // zh/ja: bigram không khoảng trắng — neighborChar là 1 ký tự liền kề
             if (lang === 'zh' || lang === 'ja') {
                 const isLeftBigram = displayToken.endsWith(token);
                 const neighborChar = isLeftBigram
@@ -709,21 +709,33 @@ class NKTgOutputWriteLayer {
 
                 if (isLeftBigram) {
                     const prevNode = siblings[spanIdx - 1];
-                    if (!prevNode || prevNode.nodeType !== Node.TEXT_NODE) return;
-                    const prevText = prevNode.textContent;
-                    if (!prevText.endsWith(neighborChar)) return;
-                    prevNode.textContent = prevText.slice(0, -1);
+                    if (!prevNode) return;
+                    if (prevNode.nodeType === Node.TEXT_NODE) {
+                        // neighborChar ở cuối text node
+                        const prevText = prevNode.textContent;
+                        if (!prevText.endsWith(neighborChar)) return;
+                        prevNode.textContent = prevText.slice(0, -1);
+                    } else if (prevNode.nodeType === Node.ELEMENT_NODE && prevNode.textContent === neighborChar) {
+                        // neighborChar là span riêng (cũng là DAMPING token) → xoá span đó
+                        parent.removeChild(prevNode);
+                    } else return;
                     const bigramSpan = this._createDampSpan(displayToken, token);
                     parent.insertBefore(bigramSpan, span);
                     parent.removeChild(span);
                 } else {
                     const nextNode = siblings[spanIdx + 1];
-                    if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) return;
-                    const nextText = nextNode.textContent;
-                    if (!nextText.startsWith(neighborChar)) return;
-                    nextNode.textContent = nextText.slice(1);
+                    if (!nextNode) return;
+                    if (nextNode.nodeType === Node.TEXT_NODE) {
+                        // neighborChar ở đầu text node
+                        const nextText = nextNode.textContent;
+                        if (!nextText.startsWith(neighborChar)) return;
+                        nextNode.textContent = nextText.slice(1);
+                    } else if (nextNode.nodeType === Node.ELEMENT_NODE && nextNode.textContent === neighborChar) {
+                        // neighborChar là span riêng → xoá span đó
+                        parent.removeChild(nextNode);
+                    } else return;
                     const bigramSpan = this._createDampSpan(displayToken, token);
-                    parent.insertBefore(bigramSpan, nextNode);
+                    parent.insertBefore(bigramSpan, siblings[spanIdx + 1] || null);
                     parent.removeChild(span);
                 }
                 return;
