@@ -588,9 +588,17 @@ class NKTgOutputWriteLayer {
             });
         });
 
-        // Refined (badge chỉ hiện ở header — nút này disabled khi đang ở Refined)
+        const activeStyle = `
+            background: #f0fdf4; border: 1px solid #4A9B2F;
+            border-radius: 6px; color: #4A9B2F;
+            font-size: 11px; font-weight: 600;
+            padding: 3px 8px; cursor: default;
+            white-space: nowrap;
+        `;
+
+        // Refined
         const btnRefined = document.createElement('button');
-        btnRefined.style.cssText = btnStyle;
+        btnRefined.style.cssText = output.mixMode === 'standard' ? activeStyle : btnStyle;
         btnRefined.textContent = '⊙ Refined';
         btnRefined.disabled = output.mixMode === 'standard';
         btnRefined.addEventListener('click', async () => {
@@ -609,7 +617,7 @@ class NKTgOutputWriteLayer {
 
         // Expanded
         const btnExpanded = document.createElement('button');
-        btnExpanded.style.cssText = btnStyle;
+        btnExpanded.style.cssText = output.mixMode === 'expanded' ? activeStyle : btnStyle;
         btnExpanded.textContent = '⊕ Expanded';
         btnExpanded.disabled = output.mixMode === 'expanded';
         btnExpanded.addEventListener('click', async () => {
@@ -628,7 +636,7 @@ class NKTgOutputWriteLayer {
 
         // Comprehensive
         const btnComprehensive = document.createElement('button');
-        btnComprehensive.style.cssText = btnStyle;
+        btnComprehensive.style.cssText = output.mixMode === 'comprehensive' ? activeStyle : btnStyle;
         btnComprehensive.textContent = '◉ Comprehensive';
         btnComprehensive.disabled = output.mixMode === 'comprehensive';
         btnComprehensive.addEventListener('click', async () => {
@@ -675,6 +683,7 @@ export async function handleOutputLayerWrite(context) {
         const base = outputWriteLayer.generateBase(context);
         const mixed = outputWriteLayer.mixLayer(base, 'standard');
         mixed._base = base;
+        context.output = mixed;  // Step 9 cần
 
         Logger.log(
             `[Step 8W Output] State: ${mixed.state} | Expansion: ${mixed.expansionRate} | Mode: standard`,
