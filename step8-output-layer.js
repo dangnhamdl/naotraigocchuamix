@@ -337,15 +337,10 @@ class NKTgOutputLayer {
         `;
 
         const activeStyle = `
-            background: #fff7ed;
-            border: 1px solid #d97706;
-            border-radius: 6px;
-            color: #d97706;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 3px 8px;
-            cursor: default;
-            white-space: nowrap;
+            background: #fff7ed; border: 1px solid #d97706;
+            border-radius: 6px; color: #d97706;
+            font-size: 11px; font-weight: 600;
+            padding: 3px 8px; cursor: default; white-space: nowrap;
         `;
 
         const btnCopy = document.createElement('button');
@@ -429,11 +424,11 @@ class NKTgOutputLayer {
         panel.appendChild(container);
         panel.__nktgLastResponse = output.response;
 
-        // Lưu cache theo mode để bấm qua lại
+        // Cache kết quả theo mode để bấm qua lại
         if (!panel.__nktgCache) panel.__nktgCache = {};
-        const cacheKey = (!output.mode || output.mode === 'Standard') ? 'standard' :
-                         output.mode === 'Condensed' ? 'condensed' : 'essence';
-        panel.__nktgCache[cacheKey] = output;
+        const _cacheKey = (!output.mode || output.mode === 'Standard') ? 'standard' :
+                          output.mode === 'Condensed' ? 'condensed' : 'essence';
+        panel.__nktgCache[_cacheKey] = output;
     }
 }
 
@@ -448,8 +443,8 @@ export async function handleOutputLayer(context) {
         context.output = outputLayer.generateResponse(context);
         context.output.mode = window._nktgNextMode || 'Standard';
         if (!window._nktgNextMode) {
-            const panel = document.getElementById('outputPanel');
-            if (panel) panel.__nktgCache = {};
+            const _panel = document.getElementById('outputPanel');
+            if (_panel) _panel.__nktgCache = {};
         }
         await outputLayer.renderToUI(context.output);
         Logger.log(
