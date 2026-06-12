@@ -273,8 +273,9 @@ function extractBigrams(token, sentence, lang) {
 // ============================================================================
 export async function fetchSynonyms(token, lang = 'en', sentence = '') {
     // Guard chung
-    if (!token || token.length < 2) return { synonyms: [], displayToken: token };
-    if (/^\d+$/.test(token))        return { synonyms: [], displayToken: token };
+    const isCJKToken = /^[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]$/.test(token);
+    if (!token || (token.length < 2 && !isCJKToken)) return { synonyms: [], displayToken: token };
+    if (/^\d+$/.test(token)) return { synonyms: [], displayToken: token };
 
     // Ngôn ngữ không hỗ trợ
     if (!SUPPORTED_LANGS.has(lang)) {
