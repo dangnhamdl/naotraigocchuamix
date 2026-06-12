@@ -1,77 +1,88 @@
 /**
  * ============================================================================
- * NKTg AI SYSTEM CORE KERNEL - STEP 8: OUTPUT WRITE LAYER (NÃO PHẢI) v1.0
+ * NKTg AI SYSTEM CORE KERNEL - STEP 8: OUTPUT WRITE LAYER (NÃO PHẢI) v2.0
  * ============================================================================
  * Não Phải — Addition mode
  *
- * Luồng:
- *   Step 7 → handleOutputLayerWrite(context)
- *   → generateBase(context)      — lấy 38.2% câu chuẩn (KHÔNG render, dùng nội bộ)
- *   → mixLayer(baseOutput)       — tầng mix (hiện tại: pass-through, sẽ mở rộng sau)
- *   → renderToUI(mixedOutput)    — render kết quả đã qua mix ra UI
+ * Base: giống hệt não trái (step8-output-layer.js) đến phần generateResponse
+ * Chỉ khác:
+ *   - Title "NKTg WRITE", border xanh lá #4A9B2F
+ *   - Nút footer: Copy / Refined / Expanded / Comprehensive / Top
+ *   - Refined  (38.2%): đóng băng, không gạch chân
+ *   - Expanded (61.8%): không gạch chân
+ *   - Comprehensive (100%): gạch chân token DAMPING phần ngoài 61.8%
+ *     → click từ gạch chân → Popover fallback text theo ngôn ngữ
  *
- * Tiêu chuẩn (chưa mix):
- *   Output giống hệt Não Trái — cùng 38.2% câu, cùng thuật toán NKTg
- *   Chỉ khác: title "NKTg WRITE", border xanh lá, nút Expanded/Comprehensive
- *
- * Placeholder buttons (logic mix sẽ bổ sung sau):
- *   ⊕ Expanded      — Vừa: thêm câu từ phần bị bỏ
- *   ◉ Comprehensive — Sâu: toàn bộ câu theo energy
+ * v17: wordCount dùng Universal tokenizer — đúng với CJK/RTL/Devanagari
+ * v18: Bỏ convertLatexToText() — dùng KaTeX 0.16.21 render công thức
+ * v2.0: Bỏ toàn bộ wiki/synonym logic — thuần trích xuất + gạch chân DAMPING
  */
-import { setPipelineState, unlockPipelineUI, Logger, initializeNKTgQuery } from './step1-init.js';
+import { setPipelineState, unlockPipelineUI, Logger } from './step1-init.js';
 import { handleDistributedSync } from './step9-distributed-sync.js';
 
 // ============================================================================
-// SCORE SENTENCE — dùng trong optimization
+// KaTeX
 // ============================================================================
-function countTokensWiki(text) {
+const KATEX_JS  = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js';
+const KATEX_CSS = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
+
+let katexLoaded = false;
+
+async function ensureKaTeX() {
+    if (katexLoaded) return;
+    if (!document.querySelector(`link[href="${KATEX_CSS}"]`)) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = KATEX_CSS;
+        document.head.appendChild(link);
+    }
+    await new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${KATEX_JS}"]`)) { resolve(); return; }
+        const script = document.createElement('script');
+        script.src = KATEX_JS;
+        script.onload  = () => resolve();
+        script.onerror = () => reject(new Error('KaTeX load failed'));
+        document.head.appendChild(script);
+    });
+    katexLoaded = true;
+}
+
+function renderSentence(el, sentence) {
+    if (!window.katex) { el.textContent = sentence; return; }
+    const parts = [];
+    const regex = /(\$\$[\s\S]+?\$\$|\$[^\$\n]+?\$)/g;
+    let last = 0, match;
+    while ((match = regex.exec(sentence)) !== null) {
+        if (match.index > last) parts.push({ type: 'text', content: sentence.slice(last, match.index) });
+        const raw = match[0];
+        const isBlock = raw.startsWith('$$');
+        parts.push({ type: 'math', latex: isBlock ? raw.slice(2, -2) : raw.slice(1, -1), block: isBlock });
+        last = match.index + raw.length;
+    }
+    if (last < sentence.length) parts.push({ type: 'text', content: sentence.slice(last) });
+    if (parts.length === 0 || parts.every(p => p.type === 'text')) { el.textContent = sentence; return; }
+    el.innerHTML = '';
+    for (const part of parts) {
+        if (part.type === 'text') {
+            el.appendChild(document.createTextNode(part.content));
+        } else {
+            const mathEl = document.createElement(part.block ? 'div' : 'span');
+            try {
+                window.katex.render(part.latex, mathEl, { throwOnError: false, displayMode: part.block });
+            } catch {
+                mathEl.textContent = part.block ? `$$${part.latex}$$` : `$${part.latex}$`;
+            }
+            el.appendChild(mathEl);
+        }
+    }
+}
+
+function countTokens(text) {
     return text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|\p{L}+|\p{N}+/gu)?.length || 1;
 }
 
-function scoreSentenceAllWiki(sentence, tokenScores) {
-    const lower = sentence.toLowerCase();
-    let totalEnergy = 0;
-    let matchCount  = 0;
-    for (const [token, data] of Object.entries(tokenScores)) {
-        if (lower.includes(token.toLowerCase())) {
-            totalEnergy += Math.max(0, data.energy + 3);
-            matchCount++;
-        }
-    }
-    const wordCount = countTokensWiki(sentence);
-    const density   = matchCount > 0 ? matchCount / wordCount : 0;
-    return totalEnergy * density;
-}
-
 // ============================================================================
-// HELPER — Phát hiện proper noun
-// ============================================================================
-function isProperNounW(token, sentence) {
-    if (token === token.toLowerCase()) return false;
-    const idx = sentence.indexOf(token);
-    if (idx === -1) return false;
-    const before = sentence.slice(0, idx).trimEnd();
-    if (before.length === 0) return false;
-    const lastChar = before[before.length - 1];
-    if (['.', '!', '?', '"', "'", '\n'].includes(lastChar)) return false;
-    return /^[A-Z]/.test(token);
-}
-
-// ============================================================================
-// HELPER — Lọc synonyms
-// ============================================================================
-function filterSynonymsW(synonyms, originalToken) {
-    return synonyms.filter(syn => {
-        if (!syn) return false;
-        if (syn.includes(' ') || syn.includes('-')) return false;
-        if (syn.toLowerCase() === originalToken.toLowerCase()) return false;
-        if (syn.length < 2) return false;
-        return true;
-    });
-}
-
-// ============================================================================
-// FALLBACK TEXT — đa ngôn ngữ
+// FALLBACK TEXT — đa ngôn ngữ (Popover Comprehensive)
 // ============================================================================
 const FALLBACK_TEXT = {
     vi: 'Bạn có thể dùng vốn từ vựng của bạn để cân nhắc sửa chữa văn bản được tối ưu hơn.',
@@ -101,18 +112,16 @@ function getFallbackText(lang) {
     return FALLBACK_TEXT[lang] || FALLBACK_TEXT['en'];
 }
 
+// ============================================================================
+// POPOVER — mobile + desktop (giống dictionary lookup)
+// ============================================================================
 function isMobile() {
     return window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 }
 
-function _popoverWidth() {
-    return isMobile() ? 260 : 300;
-}
-
-let _activePopover = null;
-
 function showPopover(spanEl, token, lang) {
     hidePopover();
+    const popW = isMobile() ? 260 : 300;
 
     const pop = document.createElement('div');
     pop.id = 'nktg-popover';
@@ -121,7 +130,7 @@ function showPopover(spanEl, token, lang) {
         background:#fff; border:1px solid #e5e7eb;
         border-radius:10px; padding:10px 12px;
         box-shadow:0 8px 24px rgba(0,0,0,0.13);
-        width:${_popoverWidth()}px;
+        width:${popW}px;
         font-family:'Segoe UI',sans-serif;
     `;
 
@@ -144,25 +153,22 @@ function showPopover(spanEl, token, lang) {
     spanEl.style.textDecoration = 'none';
     spanEl.style.outline = '1.5px solid #4A9B2F';
 
-    // Position
-    const rect = spanEl.getBoundingClientRect();
+    // Position — flip up/down tự động
+    const rect   = spanEl.getBoundingClientRect();
     const scrollY = window.scrollY || document.documentElement.scrollTop;
     const scrollX = window.scrollX || document.documentElement.scrollLeft;
-    const popW = _popoverWidth();
-    const popH = pop.offsetHeight || 80;
+    const popH   = pop.offsetHeight || 80;
 
-    let top;
-    if (rect.top - popH - 12 >= 8) {
-        top = scrollY + rect.top - popH - 12;
-    } else {
-        top = scrollY + rect.bottom + 12;
-    }
+    const top = (rect.top - popH - 12 >= 8)
+        ? scrollY + rect.top - popH - 12
+        : scrollY + rect.bottom + 12;
     let left = scrollX + rect.left + rect.width / 2 - popW / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
 
     pop.style.top  = `${top}px`;
     pop.style.left = `${left}px`;
 
+    // Đóng khi click/tap ngoài
     const onOutside = (e) => {
         if (!pop.contains(e.target) && e.target !== spanEl) {
             hidePopover();
@@ -174,8 +180,6 @@ function showPopover(spanEl, token, lang) {
         document.addEventListener('touchstart', onOutside, true);
         document.addEventListener('mousedown',  onOutside, true);
     }, 0);
-
-    _activePopover = pop;
 }
 
 function hidePopover() {
@@ -191,27 +195,20 @@ function hidePopover() {
         el.style.textDecorationColor = 'rgba(150,150,150,0.8)';
         el.style.textDecorationThickness = '1.5px';
     });
-    _activePopover = null;
 }
 
 // ============================================================================
-// FIND WORD MATCH — hỗ trợ CJK
+// RENDER CÂU CÓ GẠCH CHÂN DAMPING — chỉ dùng cho Comprehensive (phần ngoài 61.8%)
 // ============================================================================
 function findWordMatch(text, token) {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const isLatin = /^[a-zA-Z0-9]+$/.test(token);
-    const regex = isLatin
-        ? new RegExp('\\b' + escaped + '\\b', 'i')
-        : new RegExp(escaped, 'i');
-    const match = regex.exec(text);
+    const match = new RegExp(escaped, 'i').exec(text);
     return match ? { idx: match.index, len: match[0].length } : null;
 }
 
-// ============================================================================
-// RENDER CÂU CÓ GẠCH CHÂN DAMPING — chỉ dùng cho Comprehensive
-// ============================================================================
 function renderSentenceWithDamp(el, sentence, dampTokens, lang) {
-    const sorted = [...dampTokens]
+    // Sắp xếp token theo vị trí xuất hiện trong câu
+    const sorted = dampTokens
         .map(token => { const m = findWordMatch(sentence, token); return m ? { token, idx: m.idx } : null; })
         .filter(t => t !== null)
         .sort((a, b) => a.idx - b.idx)
@@ -250,149 +247,12 @@ function renderSentenceWithDamp(el, sentence, dampTokens, lang) {
     }
 }
 
-const KATEX_JS  = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js';
-const KATEX_CSS = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
-
-let katexLoaded = false;
-
-async function ensureKaTeX() {
-    if (katexLoaded) return;
-    if (!document.querySelector(`link[href="${KATEX_CSS}"]`)) {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = KATEX_CSS;
-        document.head.appendChild(link);
-    }
-    await new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${KATEX_JS}"]`)) { resolve(); return; }
-        const script = document.createElement('script');
-        script.src = KATEX_JS;
-        script.onload  = () => resolve();
-        script.onerror = () => reject(new Error('KaTeX load failed'));
-        document.head.appendChild(script);
-    });
-    katexLoaded = true;
-}
-
-function renderSentence(el, sentence) {
-    if (!window.katex) {
-        el.textContent = sentence;
-        return;
-    }
-    const parts = [];
-    const regex = /(\$\$[\s\S]+?\$\$|\$[^\$\n]+?\$)/g;
-    let last = 0;
-    let match;
-    while ((match = regex.exec(sentence)) !== null) {
-        if (match.index > last) {
-            parts.push({ type: 'text', content: sentence.slice(last, match.index) });
-        }
-        const raw = match[0];
-        const isBlock = raw.startsWith('$$');
-        const latex = isBlock ? raw.slice(2, -2) : raw.slice(1, -1);
-        parts.push({ type: 'math', latex, block: isBlock });
-        last = match.index + raw.length;
-    }
-    if (last < sentence.length) {
-        parts.push({ type: 'text', content: sentence.slice(last) });
-    }
-    if (parts.length === 0 || parts.every(p => p.type === 'text')) {
-        el.textContent = sentence;
-        return;
-    }
-    el.innerHTML = '';
-    for (const part of parts) {
-        if (part.type === 'text') {
-            el.appendChild(document.createTextNode(part.content));
-        } else {
-            const mathEl = document.createElement(part.block ? 'div' : 'span');
-            try {
-                window.katex.render(part.latex, mathEl, {
-                    throwOnError: false,
-                    displayMode: part.block
-                });
-            } catch {
-                mathEl.textContent = part.block ? `$$${part.latex}$$` : `$${part.latex}$`;
-            }
-            el.appendChild(mathEl);
-        }
-    }
-}
-
-// Render câu có gạch chân bút chì cho từ được thay
-function renderSentenceWithHighlight(el, sentence, replacements) {
-    if (!replacements || replacements.length === 0) {
-        renderSentence(el, sentence);
-        return;
-    }
-
-    // Build regex để tìm tất cả từ được thay trong câu
-    // Sắp xếp theo độ dài giảm dần để tránh replace nhầm substring
-    const sorted = [...replacements].sort((a, b) => b.replacement.length - a.replacement.length);
-
-    // Split câu thành parts: text thường và từ được highlight
-    let remaining = sentence;
-    const parts   = [];
-
-    for (const { replacement } of sorted) {
-        const idx = remaining.indexOf(replacement);
-        if (idx === -1) continue;
-        if (idx > 0) parts.push({ type: 'text', content: remaining.slice(0, idx) });
-        parts.push({ type: 'highlight', content: replacement });
-        remaining = remaining.slice(idx + replacement.length);
-    }
-    if (remaining.length > 0) parts.push({ type: 'text', content: remaining });
-
-    el.innerHTML = '';
-    for (const part of parts) {
-        if (part.type === 'text') {
-            el.appendChild(document.createTextNode(part.content));
-        } else {
-            const span = document.createElement('span');
-            span.textContent = part.content;
-            // Gạch chân kiểu nét bút chì — dashed, nhạt, gần với màu mực chì
-            span.style.cssText = `
-                text-decoration: underline;
-                text-decoration-style: dashed;
-                text-decoration-color: #9ca3af;
-                text-decoration-thickness: 1px;
-                text-underline-offset: 3px;
-            `;
-            span.title = part.content; // tooltip hiện từ được thay
-            el.appendChild(span);
-        }
-    }
-}
-
-function countTokens(text) {
-    return text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|\p{L}+|\p{N}+/gu)?.length || 1;
-}
-
 // ============================================================================
-// NKTg OUTPUT WRITE LAYER
+// CLASS — giống hệt não trái, chỉ thêm mixLayer
 // ============================================================================
 class NKTgOutputWriteLayer {
 
-    // ------------------------------------------------------------------
-    // Chấm điểm câu — KHÔNG filter theo targetState
-    // Não Phải tính tổng energy mọi token trong câu (AMP+DAMP+STABLE)
-    // ------------------------------------------------------------------
-    scoreSentenceAll(sentence, tokenScores) {
-        const lower = sentence.toLowerCase();
-        let totalEnergy = 0;
-        let matchCount = 0;
-        for (const [token, data] of Object.entries(tokenScores)) {
-            if (lower.includes(token.toLowerCase())) {
-                totalEnergy += Math.max(0, data.energy + 3);
-                matchCount++;
-            }
-        }
-        const wordCount = countTokens(sentence);
-        const density = matchCount > 0 ? matchCount / wordCount : 0;
-        return totalEnergy * density;
-    }
-
-    // Dùng lại cho Não Trái compatibility — filter theo targetState
+    // Giống hệt não trái
     scoreSentenceByPhysics(sentence, tokenScores, targetState) {
         const lower = sentence.toLowerCase();
         let totalEnergy = 0;
@@ -411,6 +271,7 @@ class NKTgOutputWriteLayer {
         return totalEnergy * density;
     }
 
+    // Giống hệt não trái
     similarity(a, b) {
         const setA = new Set(a.toLowerCase().split(/\s+/));
         const setB = new Set(b.toLowerCase().split(/\s+/));
@@ -419,6 +280,7 @@ class NKTgOutputWriteLayer {
         return union > 0 ? intersection / union : 0;
     }
 
+    // Giống hệt não trái
     deduplicate(scoredSentences) {
         const result = [];
         for (const candidate of scoredSentences) {
@@ -430,6 +292,7 @@ class NKTgOutputWriteLayer {
         return result;
     }
 
+    // Giống hệt não trái
     filterLayer(sentenceScores, tokenScores, targetState, keepCount) {
         if (keepCount <= 0) return [];
         const allSentences = Object.keys(sentenceScores);
@@ -444,36 +307,39 @@ class NKTgOutputWriteLayer {
         return Object.keys(sentenceScores).filter(s => topSet.has(s));
     }
 
-    // ------------------------------------------------------------------
-    // generateBase — 38.2% câu chuẩn, y hệt Não Trái
-    // Kết quả nội bộ — KHÔNG render trực tiếp
-    // ------------------------------------------------------------------
+    // Giống hệt não trái — 38.2%
+    extractImportantSentences(sentenceScores, tokenScores, globalState, ampRatio, dampRatio, stableRatio) {
+        const totalSentences = Object.keys(sentenceScores).length;
+        const totalKeep  = Math.ceil(totalSentences * 0.382);
+        const ampKeep    = Math.round(totalKeep * ampRatio);
+        const dampKeep   = Math.round(totalKeep * dampRatio);
+        const stableKeep = Math.max(0, totalKeep - ampKeep - dampKeep);
+        const tierAmp    = this.filterLayer(sentenceScores, tokenScores, 'AMPLIFYING', ampKeep);
+        const tierDamp   = this.filterLayer(sentenceScores, tokenScores, 'DAMPING',    dampKeep);
+        const tierStable = this.filterLayer(sentenceScores, tokenScores, 'STABLE',     stableKeep);
+        const allSelected = new Set([...tierAmp, ...tierDamp, ...tierStable]);
+        const ordered = Object.keys(sentenceScores).filter(s => allSelected.has(s));
+        Logger.log(
+            `[Step 8W Filter] AMP: ${tierAmp.length}(keep=${ampKeep}) | DAMP: ${tierDamp.length}(keep=${dampKeep}) | STABLE: ${tierStable.length}(keep=${stableKeep}) | Tổng: ${ordered.length} | ratio: 0.382`,
+            'info'
+        );
+        return ordered;
+    }
+
+    // Giống hệt não trái — generateResponse trả về base (38.2%)
     generateBase(context) {
         const kernel = context.kernel;
         const state  = kernel.state;
-        const rawInput       = context.meta?.rawInput || '';
+        const rawInput = context.meta?.rawInput || '';
         const sentenceScores = kernel.sentenceScores || {};
         const tokenScores    = kernel.tokenScores    || {};
         const ampRatio    = kernel.amplifying_ratio;
         const dampRatio   = kernel.damping_ratio;
         const stableRatio = kernel.stable_ratio;
 
-        const totalSentences = Object.keys(sentenceScores).length;
-        const totalKeep  = Math.ceil(totalSentences * 0.382);
-        const ampKeep    = Math.round(totalKeep * ampRatio);
-        const dampKeep   = Math.round(totalKeep * dampRatio);
-        const stableKeep = Math.max(0, totalKeep - ampKeep - dampKeep);
-
-        const tierAmp    = this.filterLayer(sentenceScores, tokenScores, 'AMPLIFYING', ampKeep);
-        const tierDamp   = this.filterLayer(sentenceScores, tokenScores, 'DAMPING',    dampKeep);
-        const tierStable = this.filterLayer(sentenceScores, tokenScores, 'STABLE',     stableKeep);
-
-        const allSelected = new Set([...tierAmp, ...tierDamp, ...tierStable]);
-        const baseSentences = Object.keys(sentenceScores).filter(s => allSelected.has(s));
-
-        Logger.log(
-            `[Step 8W Base] AMP: ${tierAmp.length}(keep=${ampKeep}) | DAMP: ${tierDamp.length}(keep=${dampKeep}) | STABLE: ${tierStable.length}(keep=${stableKeep}) | Tổng: ${baseSentences.length}`,
-            'info'
+        const baseSentences = this.extractImportantSentences(
+            sentenceScores, tokenScores, state,
+            ampRatio, dampRatio, stableRatio
         );
 
         const ampCount    = kernel.dominantTokens.length;
@@ -482,44 +348,46 @@ class NKTgOutputWriteLayer {
             (kernel.stableTokens?.length   || 0);
 
         let prefix = '';
-        if (state === 'AMPLIFYING') prefix = `Amplifying ${ampCount}/${totalTokens} tokens`;
-        else if (state === 'DAMPING') prefix = `Damping ${kernel.filteredTokens?.length}/${totalTokens} tokens`;
-        else prefix = `Stable ${kernel.stableTokens?.length}/${totalTokens} tokens`;
+        if (state === 'AMPLIFYING') {
+            prefix = `Amplifying ${ampCount}/${totalTokens} tokens`;
+        } else if (state === 'DAMPING') {
+            prefix = `Damping ${kernel.filteredTokens?.length}/${totalTokens} tokens`;
+        } else {
+            prefix = `Stable ${kernel.stableTokens?.length}/${totalTokens} tokens`;
+        }
 
         return {
-            baseSentences,          // nội bộ — tầng mix dùng
-            sentenceScores,         // nội bộ — tầng mix dùng
-            tokenScores,            // nội bộ — tầng mix dùng
-            rawInput,
-            state,
-            prefix,
+            baseSentences,
+            sentenceScores,
+            tokenScores,
             ampRatio,
             dampRatio,
             stableRatio,
-            lang: context.textMeta?.language || 'en',  // cho Wiki search
+            state,
+            prefix,
+            rawInput,
+            lang: context.textMeta?.language || 'en',
             dominantTokens: kernel.dominantTokens,
             filteredTokens: kernel.filteredTokens,
             stableTokens:   kernel.stableTokens,
-            processedAt: Date.now()
         };
     }
 
-    // ------------------------------------------------------------------
-    // mixLayer — tầng trung gian
-    // standard    : baseSentences (pass-through)
-    // expanded    : baseSentences + optimizedPool (câu bị bỏ đã tối ưu)
-    // comprehensive: baseSentences + tất cả optimizedPool, giữ thứ tự gốc
-    // ------------------------------------------------------------------
+    // ============================================================================
+    // MIX LAYER — não phải thêm vào so với não trái
+    // Refined (38.2%): dùng baseSentences
+    // Expanded (61.8%): tính lại theo cùng logic, ratio 0.618
+    // Comprehensive (100%): toàn bộ câu theo thứ tự gốc
+    // ============================================================================
     mixLayer(base, mixMode = 'standard') {
-        let selectedSentences;
         const allSentences = Object.keys(base.sentenceScores);
+        let selectedSentences;
 
         if (mixMode === 'standard') {
             selectedSentences = base.baseSentences;
 
         } else if (mixMode === 'expanded') {
-            // 61.8% câu theo thứ tự gốc
-            const totalKeep = Math.ceil(allSentences.length * 0.618);
+            const totalKeep  = Math.ceil(allSentences.length * 0.618);
             const ampKeep    = Math.round(totalKeep * base.ampRatio);
             const dampKeep   = Math.round(totalKeep * base.dampRatio);
             const stableKeep = Math.max(0, totalKeep - ampKeep - dampKeep);
@@ -534,13 +402,21 @@ class NKTgOutputWriteLayer {
             );
 
         } else if (mixMode === 'comprehensive') {
-            // 100% câu theo thứ tự gốc
             selectedSentences = allSentences;
             Logger.log(`[Step 8W Filter] Comprehensive — toàn bộ ${allSentences.length} câu theo thứ tự gốc`, 'info');
-
         } else {
             selectedSentences = base.baseSentences;
         }
+
+        // expandedSet: 61.8% đóng băng — dùng để xác định câu nào cần gạch chân
+        const expandedTotalKeep  = Math.ceil(allSentences.length * 0.618);
+        const expandedAmpKeep    = Math.round(expandedTotalKeep * base.ampRatio);
+        const expandedDampKeep   = Math.round(expandedTotalKeep * base.dampRatio);
+        const expandedStableKeep = Math.max(0, expandedTotalKeep - expandedAmpKeep - expandedDampKeep);
+        const expAmp    = this.filterLayer(base.sentenceScores, base.tokenScores, 'AMPLIFYING', expandedAmpKeep);
+        const expDamp   = this.filterLayer(base.sentenceScores, base.tokenScores, 'DAMPING',    expandedDampKeep);
+        const expStable = this.filterLayer(base.sentenceScores, base.tokenScores, 'STABLE',     expandedStableKeep);
+        const expandedSet = new Set([...expAmp, ...expDamp, ...expStable]);
 
         const optimizedText = selectedSentences.join(' ');
         const displaySentences = [];
@@ -551,23 +427,15 @@ class NKTgOutputWriteLayer {
             }
         }
 
-        // Build expandedSet (61.8%) — đóng băng, không gạch chân
-        const totalKeepExp = Math.ceil(allSentences.length * 0.618);
-        const ampKeepExp    = Math.round(totalKeepExp * base.ampRatio);
-        const dampKeepExp   = Math.round(totalKeepExp * base.dampRatio);
-        const stableKeepExp = Math.max(0, totalKeepExp - ampKeepExp - dampKeepExp);
-        const tierAmpExp    = this.filterLayer(base.sentenceScores, base.tokenScores, 'AMPLIFYING', ampKeepExp);
-        const tierDampExp   = this.filterLayer(base.sentenceScores, base.tokenScores, 'DAMPING',    dampKeepExp);
-        const tierStableExp = this.filterLayer(base.sentenceScores, base.tokenScores, 'STABLE',     stableKeepExp);
-        const expandedSet   = new Set([...tierAmpExp, ...tierDampExp, ...tierStableExp]);
-
         return {
-            sentences:       displaySentences,
-            response:        optimizedText,
-            prefix:          base.prefix,
-            state:           base.state,
+            sentences:      displaySentences,
+            response:       optimizedText,
+            prefix:         base.prefix,
+            state:          base.state,
             mixMode,
-            refinedSet:      expandedSet, // 61.8% đóng băng — không gạch chân
+            expandedSet,                  // 61.8% đóng băng
+            lang:           base.lang,
+            tokenScores:    base.tokenScores,
             originalLength:  base.rawInput.length,
             optimizedLength: optimizedText.length,
             expansionRate: base.rawInput.length > 0
@@ -580,11 +448,6 @@ class NKTgOutputWriteLayer {
         };
     }
 
-    // ------------------------------------------------------------------
-    // renderToUI — Não Phải visual
-    // Border xanh lá (#4A9B2F), title "NKTg WRITE"
-    // Nút: Copy / Expanded (placeholder) / Comprehensive (placeholder) / Top
-    // ------------------------------------------------------------------
     async renderToUI(output) {
         const panel = document.getElementById('outputPanel');
         if (!panel) return;
@@ -620,27 +483,20 @@ class NKTgOutputWriteLayer {
                            output.state === 'DAMPING'    ? '#da3633' : '#238636';
         badge.style.cssText = `
             background: ${badgeColor};
-            color: #fff;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 12px;
+            color: #fff; font-size: 11px; font-weight: 600;
+            padding: 2px 8px; border-radius: 12px;
         `;
         badge.textContent = output.state;
 
         const modeBadge = document.createElement('span');
         modeBadge.style.cssText = `
-            background: #f0fdf4;
-            color: #4A9B2F;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 12px;
-            border: 1px solid #86efac;
-            margin-left: auto;
+            background: #f0fdf4; color: #4A9B2F;
+            font-size: 11px; font-weight: 600;
+            padding: 2px 8px; border-radius: 12px;
+            border: 1px solid #86efac; margin-left: auto;
         `;
-        modeBadge.textContent = output.mixMode === 'standard' ? 'Refined' :
-                                output.mixMode === 'expanded' ? 'Expanded' : 'Comprehensive';
+        modeBadge.textContent = output.mixMode === 'standard'     ? 'Refined' :
+                                output.mixMode === 'expanded'     ? 'Expanded' : 'Comprehensive';
 
         header.appendChild(title);
         header.appendChild(badge);
@@ -650,66 +506,52 @@ class NKTgOutputWriteLayer {
         // Meta
         const meta = document.createElement('div');
         meta.style.cssText = `
-            padding: 10px 18px;
-            border-bottom: 1px solid #d1d5db;
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            font-size: 12px;
-            color: #6b7280;
+            padding: 10px 18px; border-bottom: 1px solid #d1d5db;
+            display: flex; gap: 20px; flex-wrap: wrap;
+            font-size: 12px; color: #6b7280;
         `;
-
-        const metaItems = [
-            { label: 'Analysis',   value: output.prefix },
-            { label: 'Expansion',  value: output.expansionRate },
-            { label: 'Chars',      value: `${output.originalLength} → ${output.optimizedLength}` }
-        ];
-
-        for (const item of metaItems) {
+        for (const item of [
+            { label: 'Analysis',  value: output.prefix },
+            { label: 'Expansion', value: output.expansionRate },
+            { label: 'Chars',     value: `${output.originalLength} → ${output.optimizedLength}` }
+        ]) {
             const el = document.createElement('span');
             el.innerHTML = `<strong style="color:#1a1a1a">${item.label}:</strong> ${item.value}`;
             meta.appendChild(el);
         }
         container.appendChild(meta);
 
-        // Body
+        // Content
         const responseWrap = document.createElement('div');
         responseWrap.style.cssText = 'padding: 16px 18px;';
 
-        try {
-            await ensureKaTeX();
-        } catch {
+        try { await ensureKaTeX(); } catch {
             Logger.log('[Step 8W] KaTeX load failed — fallback to plain text.', 'warn');
         }
 
         for (const item of output.sentences) {
-            const text             = typeof item === 'string' ? item : item.text;
-            const originalSentence = typeof item === 'string' ? item : item.originalSentence;
-            const lang             = output._base?.lang || 'en';
-            const isNew            = output.refinedSet && !output.refinedSet.has(originalSentence);
+            const text             = item.text;
+            const originalSentence = item.originalSentence;
+            // Gạch chân chỉ khi: Comprehensive + câu nằm ngoài 61.8%
+            const isNew = output.mixMode === 'comprehensive' &&
+                          output.expandedSet &&
+                          !output.expandedSet.has(originalSentence);
 
             const p = document.createElement('p');
             p.style.cssText = `
-                margin: 0 0 10px 0;
-                padding: 10px 14px;
+                margin: 0 0 10px 0; padding: 10px 14px;
                 background: #ffffff;
                 border-left: 3px solid #4A9B2F;
                 border-radius: 0 6px 6px 0;
-                line-height: 1.7;
-                font-size: 14px;
+                line-height: 1.7; font-size: 14px;
             `;
 
-            // Gạch chân DAMPING chỉ khi: câu nằm ngoài 38.2% (isNew) + chỉ mode comprehensive
-            if (isNew && output.mixMode === 'comprehensive' && output._base?.tokenScores) {
-                const dampTokens = Object.entries(output._base.tokenScores)
-                    .filter(([token, data]) =>
-                        data.state === 'DAMPING' &&
-                        findWordMatch(text, token) !== null &&
-                        !isProperNounW(token, text)
-                    )
+            if (isNew && output.tokenScores) {
+                const validDamp = Object.entries(output.tokenScores)
+                    .filter(([token, data]) => data.state === 'DAMPING' && findWordMatch(text, token) !== null)
                     .map(([token]) => token);
-                if (dampTokens.length > 0) {
-                    renderSentenceWithDamp(p, text, dampTokens, lang);
+                if (validDamp.length > 0) {
+                    renderSentenceWithDamp(p, text, validDamp, output.lang);
                 } else {
                     renderSentence(p, text);
                 }
@@ -722,23 +564,15 @@ class NKTgOutputWriteLayer {
         // Footer
         const footer = document.createElement('div');
         footer.style.cssText = `
-            padding: 8px 12px;
-            border-top: 1px solid #d1d5db;
-            display: flex;
-            gap: 6px;
-            align-items: center;
-            flex-wrap: nowrap;
+            padding: 8px 12px; border-top: 1px solid #d1d5db;
+            display: flex; gap: 6px; align-items: center; flex-wrap: nowrap;
         `;
 
         const btnStyle = `
-            background: transparent;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            color: #6b7280;
-            font-size: 11px;
-            font-weight: 500;
-            padding: 3px 8px;
-            cursor: pointer;
+            background: transparent; border: 1px solid #d1d5db;
+            border-radius: 6px; color: #6b7280;
+            font-size: 11px; font-weight: 500;
+            padding: 3px 8px; cursor: pointer;
             transition: border-color 0.2s, color 0.2s;
             white-space: nowrap;
         `;
@@ -747,7 +581,6 @@ class NKTgOutputWriteLayer {
         const btnCopy = document.createElement('button');
         btnCopy.style.cssText = btnStyle;
         btnCopy.textContent = '⎘ Copy';
-        btnCopy.title = 'Copy kết quả';
         btnCopy.addEventListener('click', () => {
             navigator.clipboard.writeText(output.response).then(() => {
                 btnCopy.textContent = '✓ Copied';
@@ -755,11 +588,30 @@ class NKTgOutputWriteLayer {
             });
         });
 
+        // Refined (badge chỉ hiện ở header — nút này disabled khi đang ở Refined)
+        const btnRefined = document.createElement('button');
+        btnRefined.style.cssText = btnStyle;
+        btnRefined.textContent = '⊙ Refined';
+        btnRefined.disabled = output.mixMode === 'standard';
+        btnRefined.addEventListener('click', async () => {
+            btnRefined.disabled = true;
+            btnRefined.textContent = '...';
+            try {
+                const mixed = outputWriteLayer.mixLayer(output._base, 'standard');
+                mixed._base = output._base;
+                await outputWriteLayer.renderToUI(mixed);
+            } catch (err) {
+                Logger.log(`[Step 8W] Refined error: ${err.message}`, 'danger');
+                btnRefined.disabled = false;
+                btnRefined.textContent = '⊙ Refined';
+            }
+        });
+
         // Expanded
         const btnExpanded = document.createElement('button');
         btnExpanded.style.cssText = btnStyle;
         btnExpanded.textContent = '⊕ Expanded';
-        btnExpanded.title = 'Mở rộng vừa — 61.8% câu';
+        btnExpanded.disabled = output.mixMode === 'expanded';
         btnExpanded.addEventListener('click', async () => {
             btnExpanded.disabled = true;
             btnExpanded.textContent = '...';
@@ -778,7 +630,7 @@ class NKTgOutputWriteLayer {
         const btnComprehensive = document.createElement('button');
         btnComprehensive.style.cssText = btnStyle;
         btnComprehensive.textContent = '◉ Comprehensive';
-        btnComprehensive.title = 'Mở rộng sâu — 100% câu + gạch chân DAMPING';
+        btnComprehensive.disabled = output.mixMode === 'comprehensive';
         btnComprehensive.addEventListener('click', async () => {
             btnComprehensive.disabled = true;
             btnComprehensive.textContent = '...';
@@ -794,18 +646,18 @@ class NKTgOutputWriteLayer {
         });
 
         // Top
-        const btnScrollUp = document.createElement('button');
-        btnScrollUp.style.cssText = btnStyle;
-        btnScrollUp.textContent = '↑ Top';
-        btnScrollUp.title = 'Lên đầu trang';
-        btnScrollUp.addEventListener('click', () => {
+        const btnTop = document.createElement('button');
+        btnTop.style.cssText = btnStyle;
+        btnTop.textContent = '↑ Top';
+        btnTop.addEventListener('click', () => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
 
         footer.appendChild(btnCopy);
+        footer.appendChild(btnRefined);
         footer.appendChild(btnExpanded);
         footer.appendChild(btnComprehensive);
-        footer.appendChild(btnScrollUp);
+        footer.appendChild(btnTop);
         container.appendChild(responseWrap);
         container.appendChild(footer);
         panel.appendChild(container);
@@ -818,26 +670,18 @@ export const outputWriteLayer = new NKTgOutputWriteLayer();
 export async function handleOutputLayerWrite(context) {
     try {
         Logger.log('[Step 8W Node] Output Write Layer (Não Phải) processing...', 'info');
-        if (!context.kernel) {
-            throw new Error('Missing context.kernel data from Step 7.');
-        }
+        if (!context.kernel) throw new Error('Missing context.kernel data from Step 7.');
 
-        // Bước 1: lấy 38.2% câu chuẩn — nội bộ, không render
         const base = outputWriteLayer.generateBase(context);
-        Logger.log('[Step 8W] Base generated — passing to mix layer...', 'info');
-
-        // Bước 2: mix layer (tiêu chuẩn = pass-through)
-        context.output = outputWriteLayer.mixLayer(base, 'standard');
-        context.output._base = base;  // giữ base để nút Expanded/Comprehensive dùng
-
-        // Bước 3: render kết quả đã qua mix
-        await outputWriteLayer.renderToUI(context.output);
+        const mixed = outputWriteLayer.mixLayer(base, 'standard');
+        mixed._base = base;
 
         Logger.log(
-            `[Step 8W Output] State: ${context.output.state} | Expansion: ${context.output.expansionRate} | Mode: ${context.output.mixMode}`,
+            `[Step 8W Output] State: ${mixed.state} | Expansion: ${mixed.expansionRate} | Mode: standard`,
             'success'
         );
 
+        await outputWriteLayer.renderToUI(mixed);
         await handleDistributedSync(context);
     } catch (err) {
         Logger.log(`[Step 8W Fatal] ${err.message}`, 'danger');
