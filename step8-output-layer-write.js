@@ -199,10 +199,10 @@ function hidePopover() {
 // ============================================================================
 function findWordMatch(text, token) {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const isCJK = /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/.test(token);
-    const regex = isCJK
-        ? new RegExp(escaped)
-        : new RegExp('\\b' + escaped + '\\b', 'i');
+    const isLatin = /^[a-zA-Z0-9]+$/.test(token);
+    const regex = isLatin
+        ? new RegExp('\\b' + escaped + '\\b', 'i')
+        : new RegExp(escaped, 'i');
     const match = regex.exec(text);
     return match ? { idx: match.index, len: match[0].length } : null;
 }
