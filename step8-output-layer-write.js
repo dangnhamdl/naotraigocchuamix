@@ -136,7 +136,11 @@ function isProperNounW(token, sentence) {
 // Tìm vị trí match đúng word boundary
 function findWordMatch(text, token) {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp('\\b' + escaped + '\\b', 'i');
+    // CJK: không có \b word boundary — tìm trực tiếp bằng indexOf
+    const isCJK = /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/.test(token);
+    const regex = isCJK
+        ? new RegExp(escaped)
+        : new RegExp('\\b' + escaped + '\\b', 'i');
     const match = regex.exec(text);
     return match ? { idx: match.index, len: match[0].length } : null;
 }
