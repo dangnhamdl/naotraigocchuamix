@@ -663,21 +663,21 @@ class NKTgOutputWriteLayer {
                 _synonymCache[token.toLowerCase()] = result;
                 Logger.log(`[Step 8W Cache] "${token}" → displayToken:"${result.displayToken}" | ${result.synonyms.length} synonym(s)`, 'info');
 
-                // Tiếng Việt: patch DOM sau khi biết displayToken
-                if (lang === 'vi') {
-                    this._patchVietnameseUnderline(token, result.displayToken);
+                // Tiếng Việt, Trung, Nhật: patch DOM sau khi biết displayToken
+                if (['vi', 'zh', 'ja'].includes(lang)) {
+                    this._patchMultiSyllableUnderline(token, result.displayToken, lang);
                 }
             } catch {
                 _synonymCache[token.toLowerCase()] = { synonyms: [], displayToken: token };
-                if (lang === 'vi') this._patchVietnameseUnderline(token, '');
+                if (['vi', 'zh', 'ja'].includes(lang)) this._patchMultiSyllableUnderline(token, '', lang);
             }
         }
     }
 
-    // Patch DOM tiếng Việt sau khi cache load xong:
-    // displayToken rỗng → xoá gạch chân (token đơn không tra được bigram)
+    // Patch DOM đa âm tiết (vi, zh, ja) sau khi cache load xong:
+    // displayToken rỗng → xoá gạch chân
     // displayToken là bigram → mở rộng span bao cả cụm
-    _patchVietnameseUnderline(token, displayToken) {
+    _patchMultiSyllableUnderline(token, displayToken, lang) {
         const spans = document.querySelectorAll(`[data-token="${token}"]`);
         spans.forEach(span => {
             const parent = span.parentNode;
@@ -692,7 +692,40 @@ class NKTgOutputWriteLayer {
 
             if (displayToken === token) return; // token đơn có synonym, không cần patch
 
-            // Bigram: xác định trái/phải
+            // zh/ja: bigram không có khoảng trắng — tìm trong text node liền kề
+            if (lang === 'zh' || lang === 'ja') {
+                const isLeftBigram = displayToken.endsWith(token);
+                const neighborChar = isLeftBigram
+                    ? displayToken[0]
+                    : displayToken[displayToken.length - 1];
+
+                const siblings = Array.from(parent.childNodes);
+                const spanIdx = siblings.indexOf(span);
+                if (spanIdx === -1) return;
+
+                if (isLeftBigram) {
+                    const prevNode = siblings[spanIdx - 1];
+                    if (!prevNode || prevNode.nodeType !== Node.TEXT_NODE) return;
+                    const prevText = prevNode.textContent;
+                    if (!prevText.endsWith(neighborChar)) return;
+                    prevNode.textContent = prevText.slice(0, -1);
+                    const bigramSpan = this._createDampSpan(displayToken, token);
+                    parent.insertBefore(bigramSpan, span);
+                    parent.removeChild(span);
+                } else {
+                    const nextNode = siblings[spanIdx + 1];
+                    if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) return;
+                    const nextText = nextNode.textContent;
+                    if (!nextText.startsWith(neighborChar)) return;
+                    nextNode.textContent = nextText.slice(1);
+                    const bigramSpan = this._createDampSpan(displayToken, token);
+                    parent.insertBefore(bigramSpan, nextNode);
+                    parent.removeChild(span);
+                }
+                return;
+            }
+
+            // vi: bigram có khoảng trắng — xác định trái/phải theo parts
             const parts = displayToken.split(' ');
             if (parts.length !== 2) return;
             const isLeftBigram = parts[1].toLowerCase() === token.toLowerCase();
@@ -703,29 +736,23 @@ class NKTgOutputWriteLayer {
             if (spanIdx === -1) return;
 
             if (isLeftBigram) {
-                // Bigram trái: prevNode là text node chứa neighborWord ở cuối
                 const prevNode = siblings[spanIdx - 1];
                 if (!prevNode || prevNode.nodeType !== Node.TEXT_NODE) return;
                 const prevText = prevNode.textContent;
                 const idx = prevText.toLowerCase().lastIndexOf(neighborWord.toLowerCase());
                 if (idx === -1) return;
-
-                const beforeText = prevText.slice(0, idx);
+                prevNode.textContent = prevText.slice(0, idx);
                 const bigramSpan = this._createDampSpan(displayToken, token);
-                prevNode.textContent = beforeText;
                 parent.insertBefore(bigramSpan, span);
                 parent.removeChild(span);
             } else {
-                // Bigram phải: nextNode là text node chứa neighborWord ở đầu (sau khoảng trắng)
                 const nextNode = siblings[spanIdx + 1];
                 if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) return;
                 const nextText = nextNode.textContent;
                 const idx = nextText.toLowerCase().indexOf(neighborWord.toLowerCase());
                 if (idx === -1) return;
-
-                const afterText = nextText.slice(idx + neighborWord.length);
+                nextNode.textContent = nextText.slice(idx + neighborWord.length);
                 const bigramSpan = this._createDampSpan(displayToken, token);
-                nextNode.textContent = afterText;
                 parent.insertBefore(bigramSpan, nextNode);
                 parent.removeChild(span);
             }
