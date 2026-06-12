@@ -250,8 +250,19 @@ class NKTgOutputLayer {
             border-radius: 12px;
         `;
         badge.textContent = output.state;
+
+        const modeBadge = document.createElement('span');
+        modeBadge.style.cssText = `
+            background: #fff7ed; color: #d97706;
+            font-size: 11px; font-weight: 600;
+            padding: 2px 8px; border-radius: 12px;
+            border: 1px solid #fed7aa; margin-left: auto;
+        `;
+        modeBadge.textContent = output.mode || 'Standard';
+
         header.appendChild(title);
         header.appendChild(badge);
+        header.appendChild(modeBadge);
         container.appendChild(header);
 
         const meta = document.createElement('div');
