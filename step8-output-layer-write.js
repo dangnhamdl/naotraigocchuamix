@@ -551,13 +551,23 @@ class NKTgOutputWriteLayer {
             }
         }
 
+        // Build expandedSet (61.8%) — đóng băng, không gạch chân
+        const totalKeepExp = Math.ceil(allSentences.length * 0.618);
+        const ampKeepExp    = Math.round(totalKeepExp * base.ampRatio);
+        const dampKeepExp   = Math.round(totalKeepExp * base.dampRatio);
+        const stableKeepExp = Math.max(0, totalKeepExp - ampKeepExp - dampKeepExp);
+        const tierAmpExp    = this.filterLayer(base.sentenceScores, base.tokenScores, 'AMPLIFYING', ampKeepExp);
+        const tierDampExp   = this.filterLayer(base.sentenceScores, base.tokenScores, 'DAMPING',    dampKeepExp);
+        const tierStableExp = this.filterLayer(base.sentenceScores, base.tokenScores, 'STABLE',     stableKeepExp);
+        const expandedSet   = new Set([...tierAmpExp, ...tierDampExp, ...tierStableExp]);
+
         return {
             sentences:       displaySentences,
             response:        optimizedText,
             prefix:          base.prefix,
             state:           base.state,
             mixMode,
-            refinedSet:      new Set(base.baseSentences), // 38.2% đóng băng — không gạch chân
+            refinedSet:      expandedSet, // 61.8% đóng băng — không gạch chân
             originalLength:  base.rawInput.length,
             optimizedLength: optimizedText.length,
             expansionRate: base.rawInput.length > 0
@@ -689,8 +699,8 @@ class NKTgOutputWriteLayer {
                 font-size: 14px;
             `;
 
-            // Gạch chân DAMPING chỉ khi: câu nằm ngoài 38.2% (isNew) + mode expanded/comprehensive
-            if (isNew && (output.mixMode === 'expanded' || output.mixMode === 'comprehensive') && output._base?.tokenScores) {
+            // Gạch chân DAMPING chỉ khi: câu nằm ngoài 38.2% (isNew) + chỉ mode comprehensive
+            if (isNew && output.mixMode === 'comprehensive' && output._base?.tokenScores) {
                 const dampTokens = Object.entries(output._base.tokenScores)
                     .filter(([token, data]) =>
                         data.state === 'DAMPING' &&
