@@ -236,7 +236,7 @@ class NKTgOutputLayer {
         `;
         const title = document.createElement('span');
         title.style.cssText = 'color: #d97706; font-size: 16px; font-weight: 600;';
-        title.textContent = 'NKTg Extraction';
+        title.textContent = 'NKTg INSIGHT';
 
         const badge = document.createElement('span');
         const badgeColor = output.state === 'AMPLIFYING' ? '#1f6feb' :
@@ -250,22 +250,8 @@ class NKTgOutputLayer {
             border-radius: 12px;
         `;
         badge.textContent = output.state;
-        const modeBadge = document.createElement('span');
-        modeBadge.style.cssText = `
-            background: #fff7ed;
-            color: #d97706;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 12px;
-            border: 1px solid #fed7aa;
-            margin-left: auto;
-        `;
-        modeBadge.textContent = output.mode || 'Standard';
-
         header.appendChild(title);
         header.appendChild(badge);
-        header.appendChild(modeBadge);
         container.appendChild(header);
 
         const meta = document.createElement('div');
@@ -339,6 +325,18 @@ class NKTgOutputLayer {
             white-space: nowrap;
         `;
 
+        const activeStyle = `
+            background: #fff7ed;
+            border: 1px solid #d97706;
+            border-radius: 6px;
+            color: #d97706;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            cursor: default;
+            white-space: nowrap;
+        `;
+
         const btnCopy = document.createElement('button');
         btnCopy.style.cssText = btnStyle;
         btnCopy.textContent = '⎘ Copy';
@@ -350,34 +348,54 @@ class NKTgOutputLayer {
             });
         });
 
+        const btnStandard = document.createElement('button');
+        btnStandard.style.cssText = (!output.mode || output.mode === 'Standard') ? activeStyle : btnStyle;
+        btnStandard.textContent = '⊙ Standard';
+        btnStandard.disabled = (!output.mode || output.mode === 'Standard');
+        btnStandard.addEventListener('click', async () => {
+            if (panel.__nktgCache?.standard) {
+                await outputLayer.renderToUI(panel.__nktgCache.standard);
+            }
+        });
+
         const btnCondensed = document.createElement('button');
-        btnCondensed.style.cssText = btnStyle;
+        btnCondensed.style.cssText = output.mode === 'Condensed' ? activeStyle : btnStyle;
         btnCondensed.textContent = '⌥ Condensed';
         btnCondensed.title = 'Nén thêm 1 vòng';
+        btnCondensed.disabled = output.mode === 'Condensed';
         btnCondensed.addEventListener('click', async () => {
+            if (panel.__nktgCache?.condensed) {
+                await outputLayer.renderToUI(panel.__nktgCache.condensed);
+                return;
+            }
             btnCondensed.disabled = true;
             btnCondensed.textContent = '...';
             Logger.log('[Step 8] Condensed: running recursion round 2...', 'info');
             window._nktgNextMode = 'Condensed';
-            await initializeNKTgQuery(output.response, 'text');
+            await initializeNKTgQuery(panel.__nktgCache.standard.response, 'text');
             window._nktgNextMode = null;
         });
 
         const btnEssence = document.createElement('button');
-        btnEssence.style.cssText = btnStyle;
+        btnEssence.style.cssText = output.mode === 'Essence' ? activeStyle : btnStyle;
         btnEssence.textContent = '◈ Essence';
         btnEssence.title = 'Nén sâu 4 vòng tiếp theo (tổng 5)';
+        btnEssence.disabled = output.mode === 'Essence';
         btnEssence.addEventListener('click', async () => {
+            if (panel.__nktgCache?.essence) {
+                await outputLayer.renderToUI(panel.__nktgCache.essence);
+                return;
+            }
             btnEssence.disabled = true;
             btnEssence.textContent = '...';
             Logger.log('[Step 8] Essence: running recursion rounds 2→5...', 'info');
             window._nktgNextMode = 'Essence';
-            let currentText = output.response;
+            let currentText = panel.__nktgCache.standard.response;
             for (let i = 0; i < 4; i++) {
                 Logger.log(`[Step 8] Essence round ${i + 2}/5...`, 'info');
                 window._nktgNextMode = 'Essence';
                 await initializeNKTgQuery(currentText, 'text');
-                currentText = document.getElementById('outputPanel')?.__nktgLastResponse || currentText;
+                currentText = panel.__nktgLastResponse || currentText;
             }
             window._nktgNextMode = null;
         });
@@ -391,6 +409,7 @@ class NKTgOutputLayer {
         });
 
         footer.appendChild(btnCopy);
+        footer.appendChild(btnStandard);
         footer.appendChild(btnCondensed);
         footer.appendChild(btnEssence);
         footer.appendChild(btnScrollUp);
@@ -398,6 +417,12 @@ class NKTgOutputLayer {
         container.appendChild(footer);
         panel.appendChild(container);
         panel.__nktgLastResponse = output.response;
+
+        // Lưu cache theo mode để bấm qua lại
+        if (!panel.__nktgCache) panel.__nktgCache = {};
+        const cacheKey = (!output.mode || output.mode === 'Standard') ? 'standard' :
+                         output.mode === 'Condensed' ? 'condensed' : 'essence';
+        panel.__nktgCache[cacheKey] = output;
     }
 }
 
@@ -411,6 +436,10 @@ export async function handleOutputLayer(context) {
         }
         context.output = outputLayer.generateResponse(context);
         context.output.mode = window._nktgNextMode || 'Standard';
+        if (!window._nktgNextMode) {
+            const panel = document.getElementById('outputPanel');
+            if (panel) panel.__nktgCache = {};
+        }
         await outputLayer.renderToUI(context.output);
         Logger.log(
             `[Step 8 Output] State: ${context.output.state} | Compression: ${context.output.compressionRate}`,
