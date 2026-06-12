@@ -293,8 +293,9 @@ class NKTgOutputWriteLayer {
     _showPopover(spanEl, token, lang) {
         this._hidePopover();
 
-        const synonyms = _synonymCache[token.toLowerCase()];
-        if (synonyms === undefined) return; // chưa load xong, bỏ qua
+        const cached = _synonymCache[token.toLowerCase()];
+        if (cached === undefined) return; // chưa load xong, bỏ qua
+        const synonyms = cached.synonyms || [];
 
         // Highlight từ đang chọn
         spanEl.dataset.popoverActive = '1';
@@ -426,6 +427,8 @@ class NKTgOutputWriteLayer {
         const panel = document.getElementById('outputPanel');
         if (!panel) return;
         panel.innerHTML = '';
+        // Lưu lang vào panel để _createDampSpan dùng sau khi patch
+        panel.__nktgLang = output.lang || 'en';
 
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'display:flex; align-items:stretch; width:100%;';
@@ -478,8 +481,10 @@ class NKTgOutputWriteLayer {
         let suggestionPanel = null;
 
         // Render câu — thu thập tất cả dampTokens theo thứ tự xuất hiện
+        // tokenSentenceMap: { [token]: sentence } — dùng cho bigram lookup tiếng Việt
         const allDampTokens = [];
         const seenTokens = new Set();
+        const tokenSentenceMap = {};
         for (const item of output.sentences) {
             const p = document.createElement('p');
             p.style.cssText = `
@@ -494,6 +499,7 @@ class NKTgOutputWriteLayer {
                     if (!seenTokens.has(t.toLowerCase())) {
                         seenTokens.add(t.toLowerCase());
                         allDampTokens.push(t);
+                        tokenSentenceMap[t] = item.text; // lưu câu chứa token
                     }
                 });
             } else {
@@ -544,7 +550,7 @@ class NKTgOutputWriteLayer {
         // Mọi thiết bị: preload vào cache → Popover dùng khi click/tap
         if (mode === 'comprehensive' && allDampTokens.length > 0) {
             _synonymCache = {}; // reset cache cho render mới
-            this._preloadSynonymsToCache(allDampTokens, output.lang);
+            this._preloadSynonymsToCache(allDampTokens, output.lang, tokenSentenceMap);
         }
     }
 
@@ -646,18 +652,103 @@ class NKTgOutputWriteLayer {
         }
     }
 
-    // Mobile: preload synonym vào cache ngầm — Popover dùng khi tap
-    // Tuần tự từng từ 1, giống desktop nhưng không render DOM panel
-    async _preloadSynonymsToCache(dampTokens, lang) {
+    // Mobile + Desktop: preload synonym vào cache ngầm — Popover dùng khi click/tap
+    // Tuần tự từng từ 1, tokenSentenceMap = { [token]: sentence } để hỗ trợ bigram vi
+    // Với tiếng Việt: sau khi tìm được bigram → patch DOM gạch chân bigram thay vì token đơn
+    async _preloadSynonymsToCache(dampTokens, lang, tokenSentenceMap = {}) {
         for (const token of dampTokens) {
             try {
-                const synonyms = await fetchSynonyms(token, lang);
-                _synonymCache[token.toLowerCase()] = synonyms || [];
-                Logger.log(`[Step 8W Mobile Cache] "${token}" → ${(synonyms || []).length} synonym(s)`, 'info');
+                const sentence = tokenSentenceMap[token] || '';
+                const result = await fetchSynonyms(token, lang, sentence);
+                _synonymCache[token.toLowerCase()] = result;
+                Logger.log(`[Step 8W Cache] "${token}" → displayToken:"${result.displayToken}" | ${result.synonyms.length} synonym(s)`, 'info');
+
+                // Tiếng Việt: patch DOM sau khi biết displayToken
+                if (lang === 'vi') {
+                    this._patchVietnameseUnderline(token, result.displayToken);
+                }
             } catch {
-                _synonymCache[token.toLowerCase()] = [];
+                _synonymCache[token.toLowerCase()] = { synonyms: [], displayToken: token };
+                if (lang === 'vi') this._patchVietnameseUnderline(token, '');
             }
         }
+    }
+
+    // Patch DOM tiếng Việt sau khi cache load xong:
+    // displayToken rỗng → xoá gạch chân (token đơn không tra được bigram)
+    // displayToken là bigram → mở rộng span bao cả cụm
+    _patchVietnameseUnderline(token, displayToken) {
+        const spans = document.querySelectorAll(`[data-token="${token}"]`);
+        spans.forEach(span => {
+            const parent = span.parentNode;
+            if (!parent) return;
+
+            if (!displayToken) {
+                // Không tìm được bigram → xoá gạch chân, giữ text thuần
+                const text = document.createTextNode(span.textContent);
+                parent.replaceChild(text, span);
+                return;
+            }
+
+            if (displayToken === token) return; // token đơn có synonym, không cần patch
+
+            // Bigram: xác định trái/phải
+            const parts = displayToken.split(' ');
+            if (parts.length !== 2) return;
+            const isLeftBigram = parts[1].toLowerCase() === token.toLowerCase();
+            const neighborWord = isLeftBigram ? parts[0] : parts[1];
+
+            const siblings = Array.from(parent.childNodes);
+            const spanIdx = siblings.indexOf(span);
+            if (spanIdx === -1) return;
+
+            if (isLeftBigram) {
+                // Bigram trái: prevNode là text node chứa neighborWord ở cuối
+                const prevNode = siblings[spanIdx - 1];
+                if (!prevNode || prevNode.nodeType !== Node.TEXT_NODE) return;
+                const prevText = prevNode.textContent;
+                const idx = prevText.toLowerCase().lastIndexOf(neighborWord.toLowerCase());
+                if (idx === -1) return;
+
+                const beforeText = prevText.slice(0, idx);
+                const bigramSpan = this._createDampSpan(displayToken, token);
+                prevNode.textContent = beforeText;
+                parent.insertBefore(bigramSpan, span);
+                parent.removeChild(span);
+            } else {
+                // Bigram phải: nextNode là text node chứa neighborWord ở đầu (sau khoảng trắng)
+                const nextNode = siblings[spanIdx + 1];
+                if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) return;
+                const nextText = nextNode.textContent;
+                const idx = nextText.toLowerCase().indexOf(neighborWord.toLowerCase());
+                if (idx === -1) return;
+
+                const afterText = nextText.slice(idx + neighborWord.length);
+                const bigramSpan = this._createDampSpan(displayToken, token);
+                nextNode.textContent = afterText;
+                parent.insertBefore(bigramSpan, nextNode);
+                parent.removeChild(span);
+            }
+        });
+    }
+
+    // Tạo span gạch chân chuẩn — dùng cho bigram patch tiếng Việt
+    _createDampSpan(displayText, token) {
+        const span = document.createElement('span');
+        span.textContent = displayText;
+        span.dataset.token = token;
+        span.style.cssText = `
+            text-decoration:underline; text-decoration-style:solid;
+            text-decoration-color:rgba(150,150,150,0.8); text-decoration-thickness:1.5px;
+            text-underline-offset:2px; cursor:pointer;
+        `;
+        span.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const panel = document.getElementById('outputPanel');
+            const lang = panel?.__nktgLang || 'vi';
+            this._showPopover(span, token, lang);
+        });
+        return span;
     }
 
     async _render(context, ratio, mode) {

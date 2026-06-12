@@ -161,7 +161,7 @@ const SUPPORTED_LANGS = new Set(['en','vi','de','es','fr','ja','ru','zh']);
 // ============================================================================
 // SANITIZE
 // ============================================================================
-function sanitize(synonyms, token) {
+function sanitize(synonyms, token, lang = 'en') {
     const lowerToken = token.toLowerCase();
     const seen = new Set();
     return synonyms.filter(syn => {
@@ -170,7 +170,9 @@ function sanitize(synonyms, token) {
         if (lower === lowerToken) return false;
         if (seen.has(lower)) return false;
         seen.add(lower);
-        if (syn.includes(' ') || syn.includes('-')) return false;
+        // Tiếng Việt: cho phép khoảng trắng (từ ghép đa âm tiết)
+        // Tiếng Anh và các ngôn ngữ khác: không cho phép khoảng trắng hoặc gạch nối
+        if (lang !== 'vi' && (syn.includes(' ') || syn.includes('-'))) return false;
         return true;
     }).slice(0, 12);
 }
@@ -194,35 +196,95 @@ async function lookupToken(token, lang) {
         raw = entry[posKeys[0]];
     }
 
-    return sanitize(raw, token);
+    return sanitize(raw, token, lang);
+}
+
+// ============================================================================
+// BIGRAM HELPER — chỉ dùng cho tiếng Việt (đa âm tiết)
+// Trả về [{bigram, displayToken}] theo thứ tự: trái trước, phải sau
+// ============================================================================
+function extractBigrams(token, sentence) {
+    if (!sentence) return [];
+    // Tách các âm tiết (word tokens) trong câu, giữ index
+    const wordRegex = /\S+/g;
+    const words = [];
+    let m;
+    while ((m = wordRegex.exec(sentence)) !== null) {
+        words.push({ word: m[0], index: m.index });
+    }
+    // Tìm vị trí token trong mảng words (so sánh lowercase)
+    const tokenLower = token.toLowerCase();
+    const pos = words.findIndex(w => w.word.toLowerCase() === tokenLower);
+    if (pos === -1) return [];
+
+    const candidates = [];
+    // Bigram trái: từ trước + token
+    if (pos > 0) {
+        const left = words[pos - 1].word;
+        candidates.push({ bigram: `${left} ${token}`, displayToken: `${left} ${token}` });
+    }
+    // Bigram phải: token + từ sau
+    if (pos < words.length - 1) {
+        const right = words[pos + 1].word;
+        candidates.push({ bigram: `${token} ${right}`, displayToken: `${token} ${right}` });
+    }
+    return candidates;
 }
 
 // ============================================================================
 // PUBLIC EXPORT — tìm tuần tự từng từ 1
+// sentence: truyền vào để hỗ trợ bigram tiếng Việt
+// Trả về { synonyms: string[], displayToken: string }
+//   displayToken = bigram nếu tìm được, token đơn nếu không
 // ============================================================================
-export async function fetchSynonyms(token, lang = 'en') {
+export async function fetchSynonyms(token, lang = 'en', sentence = '') {
     // Guard chung
-    if (!token || token.length < 2) return [];
-    if (/^\d+$/.test(token))        return [];
+    if (!token || token.length < 2) return { synonyms: [], displayToken: token };
+    if (/^\d+$/.test(token))        return { synonyms: [], displayToken: token };
 
     // Ngôn ngữ không hỗ trợ
     if (!SUPPORTED_LANGS.has(lang)) {
         Logger.log(`[HF] Unsupported lang: "${lang}"`, 'warn');
-        return [];
+        return { synonyms: [], displayToken: token };
     }
 
     // Stop words
     const stopSet = STOP_WORDS[lang] || STOP_WORDS['en'];
-    if (stopSet.has(token.toLowerCase())) return [];
+    if (stopSet.has(token.toLowerCase())) return { synonyms: [], displayToken: token };
 
     Logger.log(`[HF] fetchSynonyms: "${token}" (${lang})`, 'info');
 
     try {
+        // ----------------------------------------------------------------
+        // Tiếng Việt: thử bigram trước — chỉ gạch chân khi chắc chắn đúng
+        // ----------------------------------------------------------------
+        if (lang === 'vi' && sentence) {
+            const bigrams = extractBigrams(token, sentence);
+            for (const { bigram, displayToken } of bigrams) {
+                // Stop word guard cho bigram: bỏ qua nếu cả 2 âm tiết đều là stop word
+                const parts = bigram.toLowerCase().split(' ');
+                if (parts.every(p => stopSet.has(p))) continue;
+
+                const syns = await lookupToken(bigram, lang);
+                if (syns.length > 0) {
+                    Logger.log(`[HF] vi bigram "${bigram}" → ${syns.length} synonym(s)`, 'info');
+                    return { synonyms: syns, displayToken };
+                }
+            }
+            // Không tìm được bigram nào → không gạch chân (trả displayToken rỗng)
+            Logger.log(`[HF] vi "${token}" — no bigram found, skip underline`, 'info');
+            return { synonyms: [], displayToken: '' };
+        }
+
+        // ----------------------------------------------------------------
+        // Các ngôn ngữ khác (en, de, es, fr, ...): tra token đơn như cũ
+        // ----------------------------------------------------------------
         const syns = await lookupToken(token, lang);
         Logger.log(`[HF] "${token}" → ${syns.length} synonym(s)`, 'info');
-        return syns;
+        return { synonyms: syns, displayToken: token };
+
     } catch (err) {
         Logger.log(`[HF] "${token}" error: ${err.message}`, 'warn');
-        return [];
+        return { synonyms: [], displayToken: token };
     }
 }
