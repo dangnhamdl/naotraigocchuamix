@@ -6,7 +6,7 @@
  *
  * Base: giống hệt não trái (step8-output-layer.js) đến phần generateResponse
  * Chỉ khác:
- *   - Title "NKTg WRITE", border xanh lá #4A9B2F
+ *   - Title "NKTg Addition", border xanh lá #4A9B2F
  *   - Nút footer: Copy / Refined / Expanded / Comprehensive / Top
  *   - Refined  (38.2%): đóng băng, không gạch chân
  *   - Expanded (61.8%): không gạch chân
@@ -475,8 +475,8 @@ class NKTgOutputWriteLayer {
         `;
 
         const title = document.createElement('span');
-        title.style.cssText = 'color: #4A9B2F; font-size: 16px; font-weight: 600;';
-        title.textContent = 'NKTg WRITE';
+        title.style.cssText = 'color: #4A9B2F; font-size: 15px; font-weight: 500;';
+        title.textContent = 'NKTg Addition';
 
         const badge = document.createElement('span');
         const badgeColor = output.state === 'AMPLIFYING' ? '#1f6feb' :
