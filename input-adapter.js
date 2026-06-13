@@ -167,7 +167,8 @@ async function extractImage(file) {
     const worker = await _createWorker('eng+vie');
     try {
         const { data } = await worker.recognize(imageSource);
-        return data.text;
+        // Trả về cả text và words — words chứa confidence score từng từ
+        return { text: data.text, words: data.words || [] };
     } finally {
         await worker.terminate();
     }
@@ -250,7 +251,11 @@ export async function handleInputAdapter() {
             } else if (IMAGE_MIME_TYPES.has(file.type)) {
                 // Dùng file.type (MIME) thay vì ext — tránh file đặt tên sai extension
                 Logger.log(`[Input Adapter] Route → Step 3 Image (Tesseract.js) — ${file.type}`, 'info');
-                rawText   = await extractImage(file);
+                const imageResult = await extractImage(file);
+                rawText   = imageResult.text;
+                // Truyền ocrWords qua window tạm thời — step3-image.js đọc từ context.ocrWords
+                // Không phá signature initializeNKTgQuery(cleanText, inputType)
+                window.__nktgOcrWords = imageResult.words;
                 inputType = 'image';
 
             } else {

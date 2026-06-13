@@ -11,6 +11,11 @@
  *   - Khoảng trắng thừa giữa các ký tự trong cùng 1 từ: "h e l l o"
  *   - Dòng trống liên tiếp do khoảng cách dòng trong ảnh
  *   - Ký tự không thuộc Unicode hợp lệ (artifact nén ảnh JPG)
+ *
+ * Rác đặc thù ảnh chụp màn hình (Score-based filtering):
+ *   - Hard filter: timestamp, visual separator, URL path-like, breadcrumb, duplicate line
+ *   - Score filter (>= 2 điểm → loại): avgWordLength, consecutiveUpperWords,
+ *     characterDispersion, whitespaceFrequency, shortTokenDensity, repetitionPattern
  */
 import { setPipelineState, unlockPipelineUI, Logger } from './step1-init.js';
 import { handleDistributedRagLayer } from './step4-rag-layer.js';
@@ -147,7 +152,10 @@ async function processImage(context) {
         return match.replace(/ /g, '');
     });
 
-    // ── Rác đặc thù ảnh chụp màn hình — lọc theo dòng ──
+    // ── Rác đặc thù ảnh chụp màn hình — Score-based filtering ──
+    // Mỗi tiêu chí cộng 1 điểm rác. noiseScore >= 2 → loại bỏ dòng.
+    // Tránh xóa nhầm tiêu đề bài báo chỉ vì 1 dấu hiệu nghi ngờ.
+    const seenLines = new Set(); // Duplicate Line Filter
     const lines = text.split('\n');
     const cleanedLines = [];
     for (let i = 0; i < lines.length; i++) {
@@ -156,26 +164,59 @@ async function processImage(context) {
         // Bỏ dòng rỗng
         if (!line) continue;
 
-        // Bỏ dòng chỉ có số, dấu gạch, dấu chấm, dấu phẩy, khoảng trắng
-        // → số trang, timestamp, breadcrumb: "13/6", "1:01 PM", "5085256"
-        if (/^[\d\s\/\-\.\,\:]+$/.test(line)) continue;
+        // ── Hard filter — loại ngay không cần tính điểm ──
 
-        // Bỏ dòng chứa URL path-like: token không có space, có dấu /, dài > 20 ký tự
-        // Bắt được cả "X ś vnexpressnet/thu-tuong-...xô T i" vì token path dài
+        // Timestamp cụ thể: "13/6/2026", "06/13/2026"
+        if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(line)) continue;
+
+        // Visual separator + bullet fragment: "----", "====", "•••"
+        if (/^[-=_*•~]{3,}$/.test(line)) continue;
+
+        // URL path-like: token dài > 20 ký tự có dấu /
         if (/\S{20,}\/\S+/.test(line)) continue;
 
-        // Bỏ dòng navbar/menu — 2 tiêu chí độc lập (OR):
-        // 1. avgWordLength > 10: navbar bị OCR ghép từ dính vào nhau
-        // 2. Dòng không có dấu câu VÀ có >= 4 từ viết hoa liên tiếp: "Mớinhất VvnE-GO Thờisự Thégiới"
+        // Breadcrumb: "Trang chủ > Thời sự", "Home | News"
+        if (/\S+\s*[>|]\s*\S+/.test(line)) continue;
+
+        // Duplicate line
+        const lineKey = line.toLowerCase().replace(/\s+/g, ' ');
+        if (seenLines.has(lineKey)) continue;
+        seenLines.add(lineKey);
+
+        // ── Score-based filter — cộng điểm rác ──
+        let noiseScore = 0;
         const words = line.split(/\s+/).filter(w => w.length > 0);
+        const totalChars = line.length;
+
+        // 1. avgWordLength > 10: navbar dính từ
         const avgWordLength = line.replace(/\s/g, '').length / words.length;
+        if (avgWordLength > 10) noiseScore++;
+
+        // 2. Dòng không có dấu câu VÀ >= 4 từ viết hoa liên tiếp: navbar/menu
         const consecutiveUpperWords = (line.match(/(?:\p{Lu}\S+\s+){3,}\p{Lu}\S+/gu) || []).length;
         const hasPunctuation = /[.!?,;:]/.test(line);
-        if (avgWordLength > 10) continue;
-        if (!hasPunctuation && consecutiveUpperWords > 0) continue;
+        if (!hasPunctuation && consecutiveUpperWords > 0) noiseScore++;
 
-        // Ghép line wrap: dòng hiện tại không kết thúc dấu câu
-        // + dòng tiếp theo bắt đầu bằng chữ thường → nối bằng space
+        // 3. Character Dispersion: > 25% ký tự đặc biệt → rác UI/icon
+        const symbolCount = (line.match(/[^\p{L}\p{N}\s]/gu) || []).length;
+        if (symbolCount / totalChars > 0.25) noiseScore++;
+
+        // 4. Whitespace Frequency: > 50% khoảng trắng → từ bị tách
+        const spaceCount = (line.match(/\s/g) || []).length;
+        if (spaceCount / totalChars > 0.5) noiseScore++;
+
+        // 5. Short Token Density: > 50% token 1 ký tự → "x ś BE T i"
+        const singleCharTokens = words.filter(w => w.length === 1).length;
+        if (words.length > 2 && singleCharTokens / words.length > 0.5) noiseScore++;
+
+        // 6. Repetition Pattern: ký tự lặp >= 5 lần liên tiếp → "aaaaaa", "11111"
+        if (/(.)\1{4,}/.test(line)) noiseScore++;
+
+        // Loại bỏ nếu đủ điểm rác
+        if (noiseScore >= 2) continue;
+
+        // ── Ghép line wrap ──
+        // Dòng trước không kết thúc dấu câu + dòng hiện tại bắt đầu chữ thường → nối
         if (
             cleanedLines.length > 0 &&
             !/[.!?…,;:"")\]']$/.test(cleanedLines[cleanedLines.length - 1]) &&
