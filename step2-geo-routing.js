@@ -10,6 +10,7 @@
  *          pt/es trước fr, fr trước it, tr/sv trước de
  *          Bỏ stop-word 'um' khỏi de (trùng tiếng Bồ), nl dùng stop-words thay ëï
  *      v4: Phân luồng Step 3 theo inputType — text/txt/docx/pdf
+ *      v5: Thêm route inputType = 'image' → step3-image.js
  */
 
 import {
@@ -100,6 +101,11 @@ async function routeToStep3(context) {
         Logger.log("[Step 2] Route → Step 3 PDF", "info");
         const { step3Pdf } = await import('./step3-pdf.js');
         await step3Pdf(context);
+
+    } else if (inputType === 'image') {
+        Logger.log("[Step 2] Route → Step 3 Image", "info");
+        const { step3Image } = await import('./step3-image.js');
+        await step3Image(context);
 
     } else {
         Logger.log("[Step 2] Route → Step 3 Text (textarea)", "info");

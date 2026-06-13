@@ -6,14 +6,15 @@
  * Purpose: Nhận dạng loại input → extract text → validate 21000 ký tự → điều phối Step 3
  *
  * Luồng:
- *   File upload (.txt/.docx/.pdf) ưu tiên trước textarea
+ *   File upload (.txt/.docx/.pdf/.png/.jpg/.webp/.bmp) ưu tiên trước textarea
  *   → extract text
  *   → validate 21000 ký tự SAU extract (không kiểm tra file size)
  *   → điều phối sang Step 3 tương ứng qua inputType
  *
  * Thư viện CDN:
- *   mammoth.js  1.11.0  — https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js
- *   pdfjs-dist  3.11.174 — https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js
+ *   mammoth.js   1.11.0   — https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js
+ *   pdfjs-dist   3.11.174 — https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js
+ *   tesseract.js 5        — https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js
  */
 
 import { Logger, setPipelineState, unlockPipelineUI, initializeNKTgQuery } from './step1-init.js';
@@ -23,13 +24,16 @@ const MAX_CHARS = 21000;
 const MAMMOTH_CDN      = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js';
 const PDFJS_CDN        = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
 const PDFJS_WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const TESSERACT_CDN    = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js';
 
 // ============================================================================
 // LAZY LOAD THƯ VIỆN — chỉ load khi cần, không load khi khởi động
 // ============================================================================
 
-let mammothLoaded = false;
-let pdfjsLoaded   = false;
+let mammothLoaded    = false;
+let pdfjsLoaded      = false;
+let tesseractLoaded  = false;
+let _tesseractModule = null;
 
 function loadScript(url) {
     return new Promise((resolve, reject) => {
@@ -57,6 +61,14 @@ async function ensurePdfjs() {
     window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
     pdfjsLoaded = true;
     Logger.log('[Input Adapter] pdf.js 3.11.174 loaded.', 'info');
+}
+
+async function ensureTesseract() {
+    if (tesseractLoaded && _tesseractModule) return;
+    // Tesseract.js v5 là ESM — dùng dynamic import thay vì loadScript
+    _tesseractModule = await import(TESSERACT_CDN);
+    tesseractLoaded  = true;
+    Logger.log('[Input Adapter] Tesseract.js 5 loaded.', 'info');
 }
 
 // ============================================================================
@@ -131,6 +143,59 @@ async function extractPdf(file) {
     });
 }
 
+// Định dạng ảnh được chấp nhận — kiểm tra MIME type thay vì extension
+const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/bmp']);
+
+// Ngưỡng resize — ảnh > 10MB resize qua Canvas trước khi OCR, tránh crash browser
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+async function extractImage(file) {
+    await ensureTesseract();
+    const { createWorker } = _tesseractModule;
+
+    // Resize nếu ảnh quá lớn
+    let imageSource = file;
+    if (file.size > IMAGE_MAX_BYTES) {
+        Logger.log('[Input Adapter] Image > 10MB — resizing via Canvas...', 'warn');
+        imageSource = await resizeImageFile(file);
+    }
+
+    // Tạo worker, OCR, terminate — terminate nằm trong finally, luôn chạy dù lỗi
+    const worker = await createWorker('eng+vie');
+    try {
+        const { data } = await worker.recognize(imageSource);
+        return data.text;
+    } finally {
+        await worker.terminate();
+    }
+}
+
+async function resizeImageFile(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const MAX_DIM = 2480; // ~A4 tại 300 DPI
+            const scale   = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+            const canvas  = document.createElement('canvas');
+            canvas.width  = Math.round(img.width  * scale);
+            canvas.height = Math.round(img.height * scale);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => {
+                if (blob) resolve(blob);
+                else reject(new Error('Canvas resize failed'));
+            }, 'image/png');
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Cannot load image for resize'));
+        };
+        img.src = url;
+    });
+}
+
 // ============================================================================
 // VALIDATE 21000 KÝ TỰ SAU EXTRACT
 // ============================================================================
@@ -168,16 +233,25 @@ export async function handleInputAdapter() {
                 Logger.log('[Input Adapter] Route → Step 3 TXT', 'info');
                 rawText   = await extractTxt(file);
                 inputType = 'txt';
+
             } else if (ext === 'docx') {
                 Logger.log('[Input Adapter] Route → Step 3 DOCX (mammoth.js)', 'info');
                 rawText   = await extractDocx(file);
                 inputType = 'docx';
+
             } else if (ext === 'pdf') {
                 Logger.log('[Input Adapter] Route → Step 3 PDF (pdf.js)', 'info');
                 rawText   = await extractPdf(file);
                 inputType = 'pdf';
+
+            } else if (IMAGE_MIME_TYPES.has(file.type)) {
+                // Dùng file.type (MIME) thay vì ext — tránh file đặt tên sai extension
+                Logger.log(`[Input Adapter] Route → Step 3 Image (Tesseract.js) — ${file.type}`, 'info');
+                rawText   = await extractImage(file);
+                inputType = 'image';
+
             } else {
-                throw new Error(`Unsupported file format: .${ext}. Only .txt, .docx, .pdf are accepted.`);
+                throw new Error(`Unsupported file format: .${ext}. Only .txt, .docx, .pdf, .png, .jpg, .webp, .bmp are accepted.`);
             }
 
             const cleanText = validateExtractedText(rawText, file.name);
