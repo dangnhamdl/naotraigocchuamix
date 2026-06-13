@@ -160,18 +160,19 @@ async function processImage(context) {
         // → số trang, timestamp, breadcrumb: "13/6", "1:01 PM", "5085256"
         if (/^[\d\s\/\-\.\,\:]+$/.test(line)) continue;
 
-        // Bỏ URL path-like không có http: "vnexpressnet/thu-tuong-..."
-        // Tiêu chí: không có khoảng trắng + có dấu /
-        if (/^[^\s]+\/[^\s]+$/.test(line)) continue;
+        // Bỏ dòng chứa URL path-like: token không có space, có dấu /, dài > 20 ký tự
+        // Bắt được cả "X ś vnexpressnet/thu-tuong-...xô T i" vì token path dài
+        if (/\S{20,}\/\S+/.test(line)) continue;
 
-        // Bỏ dòng navbar/menu: từ quá dài (dính từ) VÀ tỉ lệ chữ hoa cao
-        // avgWordLength > 10: navbar bị OCR ghép từ
-        // upperCaseRatio > 0.4: menu toàn chữ hoa
+        // Bỏ dòng navbar/menu — 2 tiêu chí độc lập (OR):
+        // 1. avgWordLength > 10: navbar bị OCR ghép từ dính vào nhau
+        // 2. Dòng không có dấu câu VÀ có >= 4 từ viết hoa liên tiếp: "Mớinhất VvnE-GO Thờisự Thégiới"
         const words = line.split(/\s+/).filter(w => w.length > 0);
         const avgWordLength = line.replace(/\s/g, '').length / words.length;
-        const upperCount = (line.match(/\p{Lu}/gu) || []).length;
-        const upperRatio = upperCount / line.length;
-        if (avgWordLength > 10 && upperRatio > 0.4) continue;
+        const consecutiveUpperWords = (line.match(/(?:\p{Lu}\S+\s+){3,}\p{Lu}\S+/gu) || []).length;
+        const hasPunctuation = /[.!?,;:]/.test(line);
+        if (avgWordLength > 10) continue;
+        if (!hasPunctuation && consecutiveUpperWords > 0) continue;
 
         // Ghép line wrap: dòng hiện tại không kết thúc dấu câu
         // + dòng tiếp theo bắt đầu bằng chữ thường → nối bằng space
