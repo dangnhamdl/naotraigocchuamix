@@ -147,6 +147,46 @@ async function processImage(context) {
         return match.replace(/ /g, '');
     });
 
+    // ── Rác đặc thù ảnh chụp màn hình — lọc theo dòng ──
+    const lines = text.split('\n');
+    const cleanedLines = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        // Bỏ dòng rỗng
+        if (!line) continue;
+
+        // Bỏ dòng chỉ có số, dấu gạch, dấu chấm, dấu phẩy, khoảng trắng
+        // → số trang, timestamp, breadcrumb: "13/6", "1:01 PM", "5085256"
+        if (/^[\d\s\/\-\.\,\:]+$/.test(line)) continue;
+
+        // Bỏ URL path-like không có http: "vnexpressnet/thu-tuong-..."
+        // Tiêu chí: không có khoảng trắng + có dấu /
+        if (/^[^\s]+\/[^\s]+$/.test(line)) continue;
+
+        // Bỏ dòng navbar/menu: từ quá dài (dính từ) VÀ tỉ lệ chữ hoa cao
+        // avgWordLength > 10: navbar bị OCR ghép từ
+        // upperCaseRatio > 0.4: menu toàn chữ hoa
+        const words = line.split(/\s+/).filter(w => w.length > 0);
+        const avgWordLength = line.replace(/\s/g, '').length / words.length;
+        const upperCount = (line.match(/\p{Lu}/gu) || []).length;
+        const upperRatio = upperCount / line.length;
+        if (avgWordLength > 10 && upperRatio > 0.4) continue;
+
+        // Ghép line wrap: dòng hiện tại không kết thúc dấu câu
+        // + dòng tiếp theo bắt đầu bằng chữ thường → nối bằng space
+        if (
+            cleanedLines.length > 0 &&
+            !/[.!?…,;:"")\]']$/.test(cleanedLines[cleanedLines.length - 1]) &&
+            /^\p{Ll}/u.test(line)
+        ) {
+            cleanedLines[cleanedLines.length - 1] += ' ' + line;
+        } else {
+            cleanedLines.push(line);
+        }
+    }
+    text = cleanedLines.join('\n');
+
     // Xóa dòng trống liên tiếp (> 2) — OCR thường sinh nhiều dòng trống
     text = text.replace(/\n{3,}/g, '\n\n');
 
