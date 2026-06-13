@@ -235,8 +235,8 @@ class NKTgOutputLayer {
             gap: 10px;
         `;
         const title = document.createElement('span');
-        title.style.cssText = 'color: #d97706; font-size: 16px; font-weight: 600;';
-        title.textContent = 'NKTg INSIGHT';
+        title.style.cssText = 'color: #d97706; font-size: 15px; font-weight: 500;';
+        title.textContent = 'NKTg Extraction';
 
         const badge = document.createElement('span');
         const badgeColor = output.state === 'AMPLIFYING' ? '#1f6feb' :
