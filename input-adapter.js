@@ -33,7 +33,7 @@ const TESSERACT_CDN    = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesse
 let mammothLoaded    = false;
 let pdfjsLoaded      = false;
 let tesseractLoaded  = false;
-let _tesseractModule = null;
+let _createWorker    = null;  // giữ trực tiếp hàm createWorker sau khi import
 
 function loadScript(url) {
     return new Promise((resolve, reject) => {
@@ -64,10 +64,14 @@ async function ensurePdfjs() {
 }
 
 async function ensureTesseract() {
-    if (tesseractLoaded && _tesseractModule) return;
-    // Tesseract.js v5 là ESM — dùng dynamic import thay vì loadScript
-    _tesseractModule = await import(TESSERACT_CDN);
-    tesseractLoaded  = true;
+    if (tesseractLoaded && _createWorker) return;
+    // Tesseract.js v5 ESM — createWorker có thể nằm ở .default hoặc trực tiếp
+    const mod = await import(TESSERACT_CDN);
+    _createWorker = mod.createWorker || (mod.default && mod.default.createWorker);
+    if (typeof _createWorker !== 'function') {
+        throw new Error('Tesseract.js load failed: createWorker not found');
+    }
+    tesseractLoaded = true;
     Logger.log('[Input Adapter] Tesseract.js 5 loaded.', 'info');
 }
 
@@ -151,7 +155,6 @@ const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 async function extractImage(file) {
     await ensureTesseract();
-    const { createWorker } = _tesseractModule;
 
     // Resize nếu ảnh quá lớn
     let imageSource = file;
@@ -161,7 +164,7 @@ async function extractImage(file) {
     }
 
     // Tạo worker, OCR, terminate — terminate nằm trong finally, luôn chạy dù lỗi
-    const worker = await createWorker('eng+vie');
+    const worker = await _createWorker('eng+vie');
     try {
         const { data } = await worker.recognize(imageSource);
         return data.text;
