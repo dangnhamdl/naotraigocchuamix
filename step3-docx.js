@@ -166,6 +166,61 @@ async function processDocx(context) {
     emailMap.forEach((email, i) => { text = text.replace(`__EMAIL${i}__`, email); });
     text = text.replace(/__DASH__/g, '–');
 
+    // 12. Line-level garbage filtering — boolean thuần, không score
+    // Mỗi điều kiện độc lập: dòng khớp BẤT KỲ điều kiện nào → loại ngay
+    // Hard filter: timestamp, separator/bullet, URL/path không protocol (chuỗi
+    //   liền >=15 ký tự có dấu / — không cần domain.tld, vì OCR thường làm
+    //   mất dấu chấm domain), breadcrumb, duplicate line
+    // Lưu ý: DOCX đã xóa "|" ở rác đặc thù phía trên (trước MathGuard), nên
+    //   nhánh breadcrumb "|" trong bước này sẽ không match trong DOCX —
+    //   giữ nguyên để đồng bộ code với các step3-X.js khác, nhánh ">" vẫn hoạt động.
+    // Structural filter: dùng tokenize() — token dài (>=12) kèm nhiều token
+    //   độ dài 1 (>=3) xen kẽ → đặc trưng OCR tab/UI bị dính + rơi rớt ký tự đơn
+    //   (an toàn cho CJK vì mọi token CJK đều dài 1 → không có "token dài";
+    //    an toàn cho câu số liệu vì từ tự nhiên hiếm khi >=12 ký tự liên tục;
+    //    an toàn cho tiếng Đức từ ghép dài vì không kèm nhiều token đơn lẻ)
+    // Chạy TRƯỚC mathGuard.restore() — text vẫn chứa __MATH_N__, nên khi tính
+    // tokens cho structural filter phải strip placeholder ra trước.
+    {
+        const seenLines = new Set();
+        const lines = text.split('\n');
+        const cleanedLines = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+
+            // ── Hard filter ──
+            if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(line)) continue;          // timestamp
+            if (/^[-=_*•~]{3,}$/.test(line)) continue;                       // separator/bullet
+            if (/\S{15,}\/\S+/.test(line) && !/^https?:\/\//i.test(line)) continue; // URL/path không protocol
+            if (/\S+\s*[>|]\s*\S+/.test(line)) continue;                     // breadcrumb
+
+            const lineKey = line.toLowerCase().replace(/\s+/g, ' ');
+            if (seenLines.has(lineKey)) continue;                            // duplicate line
+            seenLines.add(lineKey);
+
+            // ── Structural filter — dùng tokenize(), bỏ qua __MATH_N__ ──
+            const lineForTokens = line.replace(/__MATH_\d+__/g, '');
+            const lineTokens = tokenize(lineForTokens);
+            const hasLongToken = lineTokens.some(t => t.length >= 12);
+            const isolatedTokenCount = lineTokens.filter(t => t.length === 1).length;
+            if (hasLongToken && isolatedTokenCount >= 3) continue;
+
+            // ── Ghép line wrap ──
+            if (
+                cleanedLines.length > 0 &&
+                !/[.!?…,;:"")\]']$/.test(cleanedLines[cleanedLines.length - 1]) &&
+                /^\p{Ll}/u.test(line)
+            ) {
+                cleanedLines[cleanedLines.length - 1] += ' ' + line;
+            } else {
+                cleanedLines.push(line);
+            }
+        }
+        text = cleanedLines.join('\n');
+        text = text.replace(/\n{3,}/g, '\n\n');
+    }
+
     // ── MATH GUARD restore ──
     text = mathGuard.restore(text);
 

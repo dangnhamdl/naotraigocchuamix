@@ -5,17 +5,17 @@
  * Input:  Text sau khi Tesseract.js OCR extract từ file ảnh
  * Output: context.tokenList + context.sentenceMap
  *
- * Rác đặc thù OCR (Tesseract.js output):
+ * Rác đặc thù OCR (Tesseract.js output) — xử lý TRƯỚC MathGuard:
  *   - Ký tự lạ do nhận sai: "l" → "1", "O" → "0", "rn" → "m"
  *   - Dòng chỉ có 1-2 ký tự (nhiễu viền, đốm ảnh)
  *   - Khoảng trắng thừa giữa các ký tự trong cùng 1 từ: "h e l l o"
  *   - Dòng trống liên tiếp do khoảng cách dòng trong ảnh
  *   - Ký tự không thuộc Unicode hợp lệ (artifact nén ảnh JPG)
  *
- * Rác đặc thù ảnh chụp màn hình (Score-based filtering):
- *   - Hard filter: timestamp, visual separator, URL path-like, breadcrumb, duplicate line
- *   - Score filter (>= 2 điểm → loại): avgWordLength, consecutiveUpperWords,
- *     characterDispersion, whitespaceFrequency, shortTokenDensity, repetitionPattern
+ * Rác cấu trúc chung (line-level garbage filtering — bước 12, đồng bộ với
+ * step3-fallback-chain.js/step3-pdf.js/step3-txt.js): timestamp, separator,
+ * URL/path không protocol, breadcrumb, duplicate line, OCR tab/UI artifact
+ * (token dài + nhiều token đơn lẻ xen kẽ) — chạy SAU MathGuard.protect().
  */
 import { setPipelineState, unlockPipelineUI, Logger } from './step1-init.js';
 import { handleDistributedRagLayer } from './step4-rag-layer.js';
@@ -152,83 +152,6 @@ async function processImage(context) {
         return match.replace(/ /g, '');
     });
 
-    // ── Rác đặc thù ảnh chụp màn hình — Score-based filtering ──
-    // Mỗi tiêu chí cộng 1 điểm rác. noiseScore >= 2 → loại bỏ dòng.
-    // Tránh xóa nhầm tiêu đề bài báo chỉ vì 1 dấu hiệu nghi ngờ.
-    const seenLines = new Set(); // Duplicate Line Filter
-    const lines = text.split('\n');
-    const cleanedLines = [];
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        // Bỏ dòng rỗng
-        if (!line) continue;
-
-        // ── Hard filter — loại ngay không cần tính điểm ──
-
-        // Timestamp cụ thể: "13/6/2026", "06/13/2026"
-        if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(line)) continue;
-
-        // Visual separator + bullet fragment: "----", "====", "•••"
-        if (/^[-=_*•~]{3,}$/.test(line)) continue;
-
-        // URL path-like: token dài > 20 ký tự có dấu /
-        if (/\S{20,}\/\S+/.test(line)) continue;
-
-        // Breadcrumb: "Trang chủ > Thời sự", "Home | News"
-        if (/\S+\s*[>|]\s*\S+/.test(line)) continue;
-
-        // Duplicate line
-        const lineKey = line.toLowerCase().replace(/\s+/g, ' ');
-        if (seenLines.has(lineKey)) continue;
-        seenLines.add(lineKey);
-
-        // ── Score-based filter — cộng điểm rác ──
-        let noiseScore = 0;
-        const words = line.split(/\s+/).filter(w => w.length > 0);
-        const totalChars = line.length;
-
-        // 1. avgWordLength > 10: navbar dính từ
-        const avgWordLength = line.replace(/\s/g, '').length / words.length;
-        if (avgWordLength > 10) noiseScore++;
-
-        // 2. Dòng không có dấu câu VÀ >= 4 từ viết hoa liên tiếp: navbar/menu
-        const consecutiveUpperWords = (line.match(/(?:\p{Lu}\S+\s+){3,}\p{Lu}\S+/gu) || []).length;
-        const hasPunctuation = /[.!?,;:]/.test(line);
-        if (!hasPunctuation && consecutiveUpperWords > 0) noiseScore++;
-
-        // 3. Character Dispersion: > 25% ký tự đặc biệt → rác UI/icon
-        const symbolCount = (line.match(/[^\p{L}\p{N}\s]/gu) || []).length;
-        if (symbolCount / totalChars > 0.25) noiseScore++;
-
-        // 4. Whitespace Frequency: > 50% khoảng trắng → từ bị tách
-        const spaceCount = (line.match(/\s/g) || []).length;
-        if (spaceCount / totalChars > 0.5) noiseScore++;
-
-        // 5. Short Token Density: > 50% token 1 ký tự → "x ś BE T i"
-        const singleCharTokens = words.filter(w => w.length === 1).length;
-        if (words.length > 2 && singleCharTokens / words.length > 0.5) noiseScore++;
-
-        // 6. Repetition Pattern: ký tự lặp >= 5 lần liên tiếp → "aaaaaa", "11111"
-        if (/(.)\1{4,}/.test(line)) noiseScore++;
-
-        // Loại bỏ nếu đủ điểm rác
-        if (noiseScore >= 2) continue;
-
-        // ── Ghép line wrap ──
-        // Dòng trước không kết thúc dấu câu + dòng hiện tại bắt đầu chữ thường → nối
-        if (
-            cleanedLines.length > 0 &&
-            !/[.!?…,;:"")\]']$/.test(cleanedLines[cleanedLines.length - 1]) &&
-            /^\p{Ll}/u.test(line)
-        ) {
-            cleanedLines[cleanedLines.length - 1] += ' ' + line;
-        } else {
-            cleanedLines.push(line);
-        }
-    }
-    text = cleanedLines.join('\n');
-
     // Xóa dòng trống liên tiếp (> 2) — OCR thường sinh nhiều dòng trống
     text = text.replace(/\n{3,}/g, '\n\n');
 
@@ -257,6 +180,58 @@ async function processImage(context) {
     text = text.replace(/[ \t]+/g, ' ').trim();
     emailMap.forEach((email, i) => { text = text.replace(`__EMAIL${i}__`, email); });
     text = text.replace(/__DASH__/g, '–');
+
+    // 12. Line-level garbage filtering — boolean thuần, không score
+    // Mỗi điều kiện độc lập: dòng khớp BẤT KỲ điều kiện nào → loại ngay
+    // Hard filter: timestamp, separator/bullet, URL/path không protocol (chuỗi
+    //   liền >=15 ký tự có dấu / — không cần domain.tld, vì OCR thường làm
+    //   mất dấu chấm domain), breadcrumb, duplicate line
+    // Structural filter: dùng tokenize() — token dài (>=12) kèm nhiều token
+    //   độ dài 1 (>=3) xen kẽ → đặc trưng OCR tab/UI bị dính + rơi rớt ký tự đơn
+    //   (an toàn cho CJK vì mọi token CJK đều dài 1 → không có "token dài";
+    //    an toàn cho câu số liệu vì từ tự nhiên hiếm khi >=12 ký tự liên tục;
+    //    an toàn cho tiếng Đức từ ghép dài vì không kèm nhiều token đơn lẻ)
+    // Chạy TRƯỚC mathGuard.restore() — text vẫn chứa __MATH_N__, nên khi tính
+    // tokens cho structural filter phải strip placeholder ra trước.
+    {
+        const seenLines = new Set();
+        const lines = text.split('\n');
+        const cleanedLines = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+
+            // ── Hard filter ──
+            if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(line)) continue;          // timestamp
+            if (/^[-=_*•~]{3,}$/.test(line)) continue;                       // separator/bullet
+            if (/\S{15,}\/\S+/.test(line) && !/^https?:\/\//i.test(line)) continue; // URL/path không protocol
+            if (/\S+\s*[>|]\s*\S+/.test(line)) continue;                     // breadcrumb
+
+            const lineKey = line.toLowerCase().replace(/\s+/g, ' ');
+            if (seenLines.has(lineKey)) continue;                            // duplicate line
+            seenLines.add(lineKey);
+
+            // ── Structural filter — dùng tokenize(), bỏ qua __MATH_N__ ──
+            const lineForTokens = line.replace(/__MATH_\d+__/g, '');
+            const lineTokens = tokenize(lineForTokens);
+            const hasLongToken = lineTokens.some(t => t.length >= 12);
+            const isolatedTokenCount = lineTokens.filter(t => t.length === 1).length;
+            if (hasLongToken && isolatedTokenCount >= 3) continue;
+
+            // ── Ghép line wrap ──
+            if (
+                cleanedLines.length > 0 &&
+                !/[.!?…,;:"")\]']$/.test(cleanedLines[cleanedLines.length - 1]) &&
+                /^\p{Ll}/u.test(line)
+            ) {
+                cleanedLines[cleanedLines.length - 1] += ' ' + line;
+            } else {
+                cleanedLines.push(line);
+            }
+        }
+        text = cleanedLines.join('\n');
+        text = text.replace(/\n{3,}/g, '\n\n');
+    }
 
     // ── MATH GUARD restore ──
     text = mathGuard.restore(text);
