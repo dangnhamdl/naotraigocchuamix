@@ -150,155 +150,51 @@ async function extractPdf(file) {
 // Định dạng ảnh được chấp nhận — kiểm tra MIME type thay vì extension
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/bmp']);
 
-// Mức tăng contrast — 0 = không đổi, dương = tăng tương phản
-const CONTRAST_LEVEL = 40;
+// Ngưỡng resize — ảnh > 10MB resize qua Canvas trước khi OCR, tránh crash browser
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
-// ============================================================================
-// OCR_LANG_HINT — bảng rút gọn CHỈ dùng để chọn gói ngôn ngữ Tesseract OCR
-// KHÔNG phải LanguageDetectionEntries của Step 2 (logic detect chính thức).
-// Mục đích duy nhất: từ text thô lần 1 (OCR bằng "eng" — chìa khóa dò script),
-// nhận diện Unicode range để chọn gói ngôn ngữ Tesseract cho lần 2.
-// Step 2 vẫn detect ngôn ngữ đầy đủ như cũ, không bị ảnh hưởng.
-// Không match script nào trong bảng → fallback "eng+vie" (Latin).
-// ============================================================================
-const OCR_LANG_HINT = Object.freeze([
-    ["jpn",     /[\u3040-\u30ff\u31f0-\u31ff]/],   // Hiragana/Katakana — Nhật
-    ["chi_sim", /[\u4e00-\u9fff]/],                 // Han CJK — Trung
-    ["kor",     /[\uac00-\ud7af]/],                 // Hangul — Hàn
-    ["heb",     /[\u0590-\u05FF]/],                 // Hebrew
-    ["fas",     /[\u067E\u0686\u0698\u06AF\u06A9]/],// Ba Tư
-    ["ara",     /[\u0600-\u06FF]/],                 // Arabic
-    ["hin",     /[\u0900-\u097F]/],                 // Devanagari
-    ["rus",     /[\u0400-\u04FF]/],                 // Cyrillic
-    ["ell",     /[\u0370-\u03FF]/],                 // Greek
-    ["tha",     /[\u0E00-\u0E7F]/],                 // Thai
-]);
+async function extractImage(file) {
+    await ensureTesseract();
 
-// Đoán gói ngôn ngữ Tesseract từ text thô lần 1 (dò bằng "eng").
-// Unicode range của ký tự vẫn đúng dù OCR sai nghĩa, đủ để nhận diện script.
-// Không match gì đặc biệt (Latin) → fallback "eng+vie".
-function guessOcrLang(rawText) {
-    for (const [lang, regex] of OCR_LANG_HINT) {
-        if (regex.test(rawText)) return lang;
+    // Resize nếu ảnh quá lớn
+    let imageSource = file;
+    if (file.size > IMAGE_MAX_BYTES) {
+        Logger.log('[Input Adapter] Image > 10MB — resizing via Canvas...', 'warn');
+        imageSource = await resizeImageFile(file);
     }
-    return 'eng+vie';
-}
 
-async function runTesseract(imageSource, lang) {
-    // Không chỉ định langPath — Tesseract.js tự tải traineddata đúng
-    // từ jsDelivr CDN theo công thức: defaultPath + langCode + '.traineddata.gz'
-    const worker = await _createWorker(lang);
+    // Tạo worker, OCR, terminate — terminate nằm trong finally, luôn chạy dù lỗi
+    const worker = await _createWorker('eng+vie');
     try {
         const { data } = await worker.recognize(imageSource);
-        return data;
+        // Trả về cả text và words — words chứa confidence score từng từ
+        return { text: data.text, words: data.words || [] };
     } finally {
         await worker.terminate();
     }
 }
 
-async function extractImage(file) {
-    await ensureTesseract();
-
-    // Luôn xử lý ảnh: resize nếu quá lớn + grayscale + tăng contrast
-    // Giúp cải thiện OCR với ảnh mờ, nén, ánh sáng không đều
-    const imageSource = await preprocessImageFile(file);
-
-    // ── Lần 1: OCR với "eng" — chìa khóa nhẹ nhất, chỉ để "phá lớp" ảnh ──
-    // Output có thể sai nghĩa nếu ảnh không phải Latin, nhưng Unicode range
-    // của ký tự (CJK, Hangul, Cyrillic, Arabic...) vẫn đúng để dò script.
-    const firstPass = await runTesseract(imageSource, 'eng');
-
-    // Đoán ngôn ngữ thật từ script trong text thô lần 1
-    const realLang = guessOcrLang(firstPass.text);
-
-    // ── Lần 2: OCR lại với ngôn ngữ thật — đây là kết quả dùng cho pipeline ──
-    Logger.log(`[Input Adapter] OCR lần 1 (eng) xong — OCR lại với "${realLang}"...`, 'info');
-    const secondPass = await runTesseract(imageSource, realLang);
-
-    return { text: secondPass.text, words: secondPass.words || [] };
-}
-
-// Resize (nếu cần) + Grayscale + Contrast + Binarization (Otsu) — chạy cho MỌI ảnh trước OCR
-// Dùng Canvas API thuần (0KB thêm) — không cần OpenCV.js
-// Mục đích: ảnh đen/trắng thuần để bản fast đọc rõ text, không phải làm ảnh đẹp
-async function preprocessImageFile(file) {
+async function resizeImageFile(file) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         const url = URL.createObjectURL(file);
         img.onload = () => {
             URL.revokeObjectURL(url);
-
-            // Resize nếu vượt MAX_DIM — giữ nguyên nếu ảnh đã nhỏ hơn
             const MAX_DIM = 2480; // ~A4 tại 300 DPI
-            const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-            const canvas = document.createElement('canvas');
+            const scale   = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+            const canvas  = document.createElement('canvas');
             canvas.width  = Math.round(img.width  * scale);
             canvas.height = Math.round(img.height * scale);
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const data = imageData.data;
-            const contrastFactor = (259 * (CONTRAST_LEVEL + 255)) / (255 * (259 - CONTRAST_LEVEL));
-
-            // ── Bước 1: Grayscale + Contrast, đồng thời build histogram ──
-            const grayValues = new Uint8ClampedArray(data.length / 4);
-            const histogram = new Array(256).fill(0);
-
-            for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-                // Grayscale: luminance theo công thức ITU-R BT.601
-                const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-
-                // Tăng contrast quanh điểm giữa 128
-                let value = contrastFactor * (gray - 128) + 128;
-                value = Math.max(0, Math.min(255, value));
-
-                grayValues[p] = value;
-                histogram[Math.round(value)]++;
-            }
-
-            // ── Bước 2: Otsu's method — tự tính ngưỡng động từ histogram ──
-            const total = grayValues.length;
-            let sum = 0;
-            for (let t = 0; t < 256; t++) sum += t * histogram[t];
-
-            let sumB = 0, wB = 0, maxVariance = 0, threshold = 128;
-            for (let t = 0; t < 256; t++) {
-                wB += histogram[t];
-                if (wB === 0) continue;
-                const wF = total - wB;
-                if (wF === 0) break;
-
-                sumB += t * histogram[t];
-                const mB = sumB / wB;
-                const mF = (sum - sumB) / wF;
-                const variance = wB * wF * (mB - mF) * (mB - mF);
-
-                if (variance > maxVariance) {
-                    maxVariance = variance;
-                    threshold = t;
-                }
-            }
-
-            // ── Bước 3: Binarization — pixel > threshold → trắng (255), ngược lại → đen (0) ──
-            for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-                const value = grayValues[p] > threshold ? 255 : 0;
-                data[i]     = value; // R
-                data[i + 1] = value; // G
-                data[i + 2] = value; // B
-                // data[i + 3] giữ nguyên alpha
-            }
-
-            ctx.putImageData(imageData, 0, 0);
-
             canvas.toBlob(blob => {
                 if (blob) resolve(blob);
-                else reject(new Error('Canvas preprocess failed'));
+                else reject(new Error('Canvas resize failed'));
             }, 'image/png');
         };
         img.onerror = () => {
             URL.revokeObjectURL(url);
-            reject(new Error('Cannot load image for preprocessing'));
+            reject(new Error('Cannot load image for resize'));
         };
         img.src = url;
     });
