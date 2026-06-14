@@ -150,11 +150,6 @@ async function extractPdf(file) {
 // Định dạng ảnh được chấp nhận — kiểm tra MIME type thay vì extension
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/bmp']);
 
-// tessdata_fast — bản LSTM-only nhẹ (~1-2MB/ngôn ngữ) thay cho bản full (~10-15MB/ngôn ngữ)
-// Hỗ trợ đầy đủ ngôn ngữ giống bản full, chỉ nén nhẹ hơn
-// Base path KHÔNG gắn ngôn ngữ cụ thể — Tesseract tự ghép {lang}.traineddata.gz
-const TESSDATA_FAST_PATH = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data@1/4.0.0_fast';
-
 // Mức tăng contrast — 0 = không đổi, dương = tăng tương phản
 const CONTRAST_LEVEL = 40;
 
@@ -190,9 +185,9 @@ function guessOcrLang(rawText) {
 }
 
 async function runTesseract(imageSource, lang) {
-    const worker = await _createWorker(lang, 1, {
-        langPath: TESSDATA_FAST_PATH
-    });
+    // Không chỉ định langPath — Tesseract.js tự tải traineddata đúng
+    // từ jsDelivr CDN theo công thức: defaultPath + langCode + '.traineddata.gz'
+    const worker = await _createWorker(lang);
     try {
         const { data } = await worker.recognize(imageSource);
         return data;
