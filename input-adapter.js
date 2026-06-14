@@ -218,8 +218,9 @@ async function extractImage(file) {
     return { text: secondPass.text, words: secondPass.words || [] };
 }
 
-// Resize (nếu cần) + Grayscale + tăng Contrast — chạy cho MỌI ảnh trước OCR
+// Resize (nếu cần) + Grayscale + Contrast + Binarization (Otsu) — chạy cho MỌI ảnh trước OCR
 // Dùng Canvas API thuần (0KB thêm) — không cần OpenCV.js
+// Mục đích: ảnh đen/trắng thuần để bản fast đọc rõ text, không phải làm ảnh đẹp
 async function preprocessImageFile(file) {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -236,12 +237,15 @@ async function preprocessImageFile(file) {
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-            // Grayscale + tăng contrast — pixel manipulation
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const data = imageData.data;
             const contrastFactor = (259 * (CONTRAST_LEVEL + 255)) / (255 * (259 - CONTRAST_LEVEL));
 
-            for (let i = 0; i < data.length; i += 4) {
+            // ── Bước 1: Grayscale + Contrast, đồng thời build histogram ──
+            const grayValues = new Uint8ClampedArray(data.length / 4);
+            const histogram = new Array(256).fill(0);
+
+            for (let i = 0, p = 0; i < data.length; i += 4, p++) {
                 // Grayscale: luminance theo công thức ITU-R BT.601
                 const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
 
@@ -249,6 +253,36 @@ async function preprocessImageFile(file) {
                 let value = contrastFactor * (gray - 128) + 128;
                 value = Math.max(0, Math.min(255, value));
 
+                grayValues[p] = value;
+                histogram[Math.round(value)]++;
+            }
+
+            // ── Bước 2: Otsu's method — tự tính ngưỡng động từ histogram ──
+            const total = grayValues.length;
+            let sum = 0;
+            for (let t = 0; t < 256; t++) sum += t * histogram[t];
+
+            let sumB = 0, wB = 0, maxVariance = 0, threshold = 128;
+            for (let t = 0; t < 256; t++) {
+                wB += histogram[t];
+                if (wB === 0) continue;
+                const wF = total - wB;
+                if (wF === 0) break;
+
+                sumB += t * histogram[t];
+                const mB = sumB / wB;
+                const mF = (sum - sumB) / wF;
+                const variance = wB * wF * (mB - mF) * (mB - mF);
+
+                if (variance > maxVariance) {
+                    maxVariance = variance;
+                    threshold = t;
+                }
+            }
+
+            // ── Bước 3: Binarization — pixel > threshold → trắng (255), ngược lại → đen (0) ──
+            for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+                const value = grayValues[p] > threshold ? 255 : 0;
                 data[i]     = value; // R
                 data[i + 1] = value; // G
                 data[i + 2] = value; // B
