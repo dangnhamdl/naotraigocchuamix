@@ -261,7 +261,9 @@ async function processText(context) {
 
     // 12. Line-level garbage filtering — boolean thuần, không score
     // Mỗi điều kiện độc lập: dòng khớp BẤT KỲ điều kiện nào → loại ngay
-    // Hard filter: timestamp, separator/bullet, URL không protocol, breadcrumb, duplicate line
+    // Hard filter: timestamp, separator/bullet, URL/path không protocol (chuỗi
+    //   liền >=15 ký tự có dấu / — không cần domain.tld, vì OCR thường làm
+    //   mất dấu chấm domain), breadcrumb, duplicate line
     // Structural filter: dùng tokenize() — token dài (>=12) kèm nhiều token
     //   độ dài 1 (>=3) xen kẽ → đặc trưng OCR tab/UI bị dính + rơi rớt ký tự đơn
     //   (an toàn cho CJK vì mọi token CJK đều dài 1 → không có "token dài";
@@ -281,7 +283,7 @@ async function processText(context) {
             // ── Hard filter ──
             if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(line)) continue;          // timestamp
             if (/^[-=_*•~]{3,}$/.test(line)) continue;                       // separator/bullet
-            if (/\w+\.\w+\/\S+/.test(line) && !/^https?:\/\//i.test(line)) continue; // URL không protocol
+            if (/\S{15,}\/\S+/.test(line) && !/^https?:\/\//i.test(line)) continue; // URL/path không protocol
             if (/\S+\s*[>|]\s*\S+/.test(line)) continue;                     // breadcrumb
 
             const lineKey = line.toLowerCase().replace(/\s+/g, ' ');
