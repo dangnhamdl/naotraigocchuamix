@@ -174,7 +174,7 @@ class NKTgOutputLayer {
             sentenceScores, tokenScores, state,
             ampRatio, dampRatio, stableRatio
         );
-        const optimizedText = sentences.join(' ');
+        const optimizedText = sentences.join('\n');
         const displaySentences = [];
         for (const sentence of sentences) {
             const lines = sentence.split('\n').map(l => l.trim()).filter(l => l.length > 0);
